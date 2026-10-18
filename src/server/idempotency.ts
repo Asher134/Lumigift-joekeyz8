@@ -80,7 +80,7 @@ export async function checkIdempotencyKey(
   userId: string,
   payload: unknown
 ): Promise<IdempotencyCheckResult> {
-  // Key is optional — callers without one proceed normally (no idempotency guarantee)
+  // Callers decide how to handle a missing key (payment initiation rejects it with 422)
   if (!idempotencyKey) {
     return { type: "missing" };
   }

@@ -27,6 +27,8 @@ export function CreateGiftForm() {
   const [usdcEquivalent, setUsdcEquivalent] = useState("…");
   const [showUnregisteredWarning, setShowUnregisteredWarning] = useState(false);
   const [recipientRegistered, setRecipientRegistered] = useState<boolean | null>(null);
+  // Stable per-form key so network retries of the same submission are deduplicated server-side
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
   const [unlockDstWarning, setUnlockDstWarning] = useState(false);
 
   // Ref to the submit button that triggers the unregistered-recipient dialog;
@@ -54,7 +56,7 @@ export function CreateGiftForm() {
     mutationFn: async (data: CreateGiftInput) => {
       const res = await csrfFetch("/api/v1/gifts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
         body: JSON.stringify({
           ...data,
           recipientIsRegistered: recipientRegistered ?? true,
@@ -237,7 +239,7 @@ export function CreateGiftForm() {
             </div>
           </div>
         </div>
-      </Dialog>
+      )}
     </>
   );
 }

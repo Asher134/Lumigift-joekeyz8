@@ -118,3 +118,6 @@ Desktop.ini
 *.tmp
 *.temp
 *.bak
+
+# External pentest reports must never be committed (#364)
+docs/security/reports/

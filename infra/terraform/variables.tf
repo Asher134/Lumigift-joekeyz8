@@ -55,3 +55,23 @@ variable "ops_alert_email" {
   type        = string
   default     = "ops@lumigift.app"
 }
+
+# ─── Cost allocation tags ─────────────────────────────────────────────────────
+
+variable "project" {
+  description = "Value for the `project` cost allocation tag"
+  type        = string
+  default     = "lumigift"
+}
+
+variable "owner" {
+  description = "Value for the `owner` cost allocation tag (team responsible for the resources)"
+  type        = string
+  default     = "platform"
+}
+
+variable "cost_center" {
+  description = "Value for the `cost-center` cost allocation tag"
+  type        = string
+  default     = "lumigift-engineering"
+}

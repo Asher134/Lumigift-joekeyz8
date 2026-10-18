@@ -13,7 +13,9 @@ import { NextRequest } from "next/server";
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockGetServerSession = jest.fn();
-jest.mock("next-auth", () => ({ getServerSession: (...args: unknown[]) => mockGetServerSession(...args) }));
+jest.mock("next-auth", () => ({
+  getServerSession: (...args: unknown[]) => mockGetServerSession(...args),
+}));
 
 jest.mock("@/lib/auth", () => ({ authOptions: {} }));
 
@@ -153,7 +155,12 @@ describe("GET /api/v1/gifts", () => {
 
   it("uses offset-based pagination when 'page' param is present", async () => {
     mockGetServerSession.mockResolvedValue({ user: SESSION_USER });
-    mockGetGiftsBySenderPage.mockResolvedValue({ gifts: [MOCK_GIFT], total: 1, page: 1, limit: 10 });
+    mockGetGiftsBySenderPage.mockResolvedValue({
+      gifts: [MOCK_GIFT],
+      total: 1,
+      page: 1,
+      limit: 10,
+    });
 
     const res = await GET(makeGET("http://localhost/api/v1/gifts?page=1&limit=10"));
     expect(res.status).toBe(200);
@@ -266,13 +273,20 @@ describe("POST /api/v1/gifts", () => {
     );
   });
 
+  it("returns 422 when Idempotency-Key header is missing", async () => {
+    mockGetServerSession.mockResolvedValue({ user: SESSION_USER });
+    mockCheckIdempotencyKey.mockResolvedValue({ type: "missing" });
+
+    const res = await POST(makePOST(VALID_GIFT_BODY));
+    expect(res.status).toBe(422);
+    expect(mockCreateGift).not.toHaveBeenCalled();
+  });
+
   it("returns 400 when idempotency key format is invalid", async () => {
     mockGetServerSession.mockResolvedValue({ user: SESSION_USER });
     mockCheckIdempotencyKey.mockResolvedValue({ type: "invalid" });
 
-    const res = await POST(
-      makePOST(VALID_GIFT_BODY, { "idempotency-key": "not-a-uuid" })
-    );
+    const res = await POST(makePOST(VALID_GIFT_BODY, { "idempotency-key": "not-a-uuid" }));
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.code).toBe("VALIDATION_ERROR");

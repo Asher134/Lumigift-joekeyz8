@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { GiftStatusBadge } from "@/components/ui/GiftStatusBadge";
@@ -12,6 +14,9 @@ import type { DiscoveredGift } from "@/server/services/claim-discovery.service";
 import styles from "./page.module.css";
 
 type Step = "phone" | "otp" | "results";
+
+/** Session storage key holding an SMS claim token across the login redirect (Issue #366). */
+const CLAIM_TOKEN_STORAGE_KEY = "lumigift:claimToken";
 
 /**
  * Recipient claim discovery (Issue #148).
@@ -27,6 +32,40 @@ export default function ClaimDiscoveryPage() {
   const [gifts, setGifts] = useState<DiscoveredGift[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { status } = useSession();
+
+  // SMS deep link: /claim?token=… — persist the token, send guests through
+  // login, then resolve the token to its gift once authenticated.
+  useEffect(() => {
+    const queryToken = searchParams.get("token");
+    if (queryToken) sessionStorage.setItem(CLAIM_TOKEN_STORAGE_KEY, queryToken);
+    const token = queryToken ?? sessionStorage.getItem(CLAIM_TOKEN_STORAGE_KEY);
+    if (!token || status === "loading") return;
+
+    if (status === "unauthenticated") {
+      router.replace(`/auth/login?callbackUrl=${encodeURIComponent("/claim")}`);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/v1/gifts/claim-token?token=${encodeURIComponent(token)}`);
+        const json = await res.json();
+        if (cancelled) return;
+        sessionStorage.removeItem(CLAIM_TOKEN_STORAGE_KEY);
+        if (!json.success) throw new Error(json.error ?? "This claim link is invalid");
+        router.replace(`/gifts/${json.data.giftId}`);
+      } catch (err) {
+        if (!cancelled) setError((err as Error).message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, status, router]);
 
   async function requestCode(e: React.FormEvent) {
     e.preventDefault();
