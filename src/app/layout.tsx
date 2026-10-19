@@ -11,6 +11,7 @@ import { Providers } from "./providers";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "https://www.lumigift.com"),
   title: {
     default: "Lumigift — Time-Locked Cash Gifts on Stellar",
     template: "%s | Lumigift",
@@ -24,6 +25,14 @@ export const metadata: Metadata = {
     url: "https://www.lumigift.com",
     siteName: "Lumigift",
     type: "website",
+    images: [
+      {
+        url: "/opengraph-image",
+        width: 1200,
+        height: 630,
+        alt: "Lumigift time-locked cash gifts",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
