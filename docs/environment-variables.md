@@ -22,10 +22,11 @@ Variables are validated on startup by a Zod schema in `src/server/config/env.ts`
 9. [SMS / OTP](#9-sms--otp)
 10. [Cron / Scheduler](#10-cron--scheduler)
 11. [Redis](#11-redis)
-12. [Gift Amount Limits](#12-gift-amount-limits)
-13. [Cloudinary (Media Uploads)](#13-cloudinary-media-uploads)
-14. [Error Monitoring — Sentry](#14-error-monitoring--sentry)
-15. [Variable Quick-Reference Table](#15-variable-quick-reference-table)
+12. [Exchange Rate Cache](#12-exchange-rate-cache)
+13. [Gift Amount Limits](#13-gift-amount-limits)
+14. [Cloudinary (Media Uploads)](#14-cloudinary-media-uploads)
+15. [Error Monitoring — Sentry](#15-error-monitoring--sentry)
+16. [Variable Quick-Reference Table](#16-variable-quick-reference-table)
 
 ---
 
@@ -456,7 +457,35 @@ Production: use a managed Redis (Upstash, Redis Cloud, AWS ElastiCache).
 
 ---
 
-## 12. Gift Amount Limits
+## 12. Exchange Rate Cache
+
+The exchange rate service caches the NGN/USDC rate in Redis to avoid hitting Stellar Horizon on every request.
+See [`docs/ops/exchange-rate-caching.md`](ops/exchange-rate-caching.md) for full documentation including the
+fetch → cache → serve flow, staleness behaviour, and the operator runbook for manually refreshing stale rates.
+
+### `EXCHANGE_RATE_CACHE_TTL`
+
+| | |
+|---|---|
+| **Required** | No (default: `60`) |
+| **Scope** | Server only |
+| **Format** | Positive integer (seconds) |
+| **Example** | `60` |
+
+Redis TTL in seconds for the cached NGN/USDC exchange rate. When the cached entry expires the service
+fetches a fresh rate from the Stellar Horizon order book and repopulates the cache.
+
+- **Lower value** (e.g. `10`) — more frequent Horizon fetches; useful in volatile rate environments.
+- **Higher value** (e.g. `300`) — fewer Horizon fetches; acceptable when rate stability is high.
+- **`0`** — disables caching (not recommended in production; will hit Horizon on every request).
+
+> **Implementation note:** As of the current release `CACHE_TTL_SEC` is a compile-time constant (`60`).
+> To make this variable effective, wire it into the service:
+> `const CACHE_TTL_SEC = Number(process.env.EXCHANGE_RATE_CACHE_TTL ?? 60);`
+
+---
+
+## 13. Gift Amount Limits
 
 These variables enforce AML (anti-money laundering) and regulatory limits on gift amounts.  
 All values are in Nigerian Naira (NGN) with no decimal component.
@@ -497,7 +526,7 @@ Exceeding this limit returns error code `GIFT_DAILY_LIMIT` (HTTP 429).
 
 ---
 
-## 13. Cloudinary (Media Uploads)
+## 14. Cloudinary (Media Uploads)
 
 Gift cards can include an image or short video uploaded to Cloudinary.
 
@@ -536,7 +565,7 @@ API secret used to sign upload parameters. Never include in client-side code or 
 
 ---
 
-## 14. Error Monitoring — Sentry
+## 15. Error Monitoring — Sentry
 
 ### `SENTRY_DSN` / `NEXT_PUBLIC_SENTRY_DSN`
 
@@ -582,7 +611,7 @@ Store as a CI secret (e.g., GitHub Actions secret) — never in `.env.local`.
 
 ---
 
-## 15. Variable Quick-Reference Table
+## 16. Variable Quick-Reference Table
 
 | Variable | Required | Scope | Default |
 |---|---|---|---|
@@ -616,6 +645,7 @@ Store as a CI secret (e.g., GitHub Actions secret) — never in `.env.local`.
 | `TERMII_SENDER_ID` | No | Server | `Lumigift` |
 | `CRON_SECRET` | ✅ | Server | — |
 | `REDIS_URL` | ✅ | Server | — |
+| `EXCHANGE_RATE_CACHE_TTL` | No | Server | `60` |
 | `GIFT_MIN_AMOUNT_NGN` | No | Server | `500` |
 | `GIFT_MAX_AMOUNT_NGN` | No | Server | `500000` |
 | `GIFT_DAILY_LIMIT_NGN` | No | Server | `1000000` |
