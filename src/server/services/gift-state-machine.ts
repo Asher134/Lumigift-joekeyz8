@@ -7,7 +7,7 @@ const TRANSITIONS: Record<GiftStatus, Set<GiftStatus>> = {
   pending_payment: new Set<GiftStatus>(["funded", "cancelled"]),
   funded: new Set<GiftStatus>(["locked", "cancelled"]),
   locked: new Set<GiftStatus>(["unlocked", "cancelled"]),
-  unlocked: new Set<GiftStatus>(["claimed", "cancelled"]),
+  unlocked: new Set<GiftStatus>(["claimed", "cancelled", "expired"]),
   claimed: new Set<GiftStatus>(),
   cancelled: new Set<GiftStatus>(),
   // legacy / edge statuses
