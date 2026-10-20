@@ -33,8 +33,40 @@ services:
       --appendfsync everysec
       --appendfilename appendonly.aof
       --dir /data
+      --save 3600 1
+      --save 300 100
+      --save 60 10000
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lumigift-network
+
+  # ─── Redis Replica ───────────────────────────────────────────────────────────
+  # Provides a read replica for local development / testing failover procedures.
+  # In production, configure at least one managed replica via your cloud provider
+  # (e.g. Redis Cluster, ElastiCache Multi-AZ, Upstash replica regions).
+  redis-replica:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    command: >
+      redis-server
+      --replicaof redis 6379
+      --appendonly yes
+      --appendfsync everysec
+      --appendfilename appendonly.aof
+      --dir /data
+    volumes:
+      - redis-replica-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -127,6 +159,7 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  redis-replica-data:
 
 networks:
   lumigift-network:
