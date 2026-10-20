@@ -26,6 +26,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
 
+  migration-lint:
+    name: Migration Safety Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Lint migrations for dangerous operations
+        run: bash scripts/lint-migrations.sh migrations
+
   lint-and-type-check:
     name: Lint & Type Check
     runs-on: ubuntu-latest
