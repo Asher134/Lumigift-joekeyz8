@@ -1,0 +1,56 @@
+version: "3.9"
+
+# Chaos Engineering Test Infrastructure
+#
+# Issue #297 — Redis and Postgres failure simulation
+#
+# Services:
+#   postgres  — real PostgreSQL instance (port 5433)
+#   redis     — real Redis instance (port 6380)
+#   toxiproxy — TCP proxy that can inject failures (port 8474 admin, 5434 pg proxy, 6381 redis proxy)
+#
+# The app (running separately) connects to Toxiproxy ports, not directly to
+# Postgres/Redis. Chaos tests toggle Toxiproxy toxics to simulate failures.
+#
+# Usage:
+#   docker compose -f chaos-tests/docker-compose.chaos.yml up -d
+#   npx ts-node chaos-tests/run-chaos-suite.ts
+#   docker compose -f chaos-tests/docker-compose.chaos.yml down
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lumigift
+      POSTGRES_PASSWORD: lumigift
+      POSTGRES_DB: lumigift_chaos
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lumigift"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    ports:
+      - "8474:8474"   # Toxiproxy admin API
+      - "5434:5434"   # Proxied Postgres
+      - "6381:6381"   # Proxied Redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Toxiproxy starts with no proxies; the test runner creates them via the admin API
