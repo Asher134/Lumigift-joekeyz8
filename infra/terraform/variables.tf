@@ -47,3 +47,11 @@ variable "domain_name" {
   description = "Root domain name managed in Route 53 (e.g. lumigift.app)"
   type        = string
 }
+
+# ─── #104: Backup automation variables ───────────────────────────────────────
+
+variable "ops_alert_email" {
+  description = "Email address that receives backup failure SNS alerts"
+  type        = string
+  default     = "ops@lumigift.app"
+}

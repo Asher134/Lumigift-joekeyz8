@@ -50,7 +50,7 @@ Lumigift is a full-stack gifting platform that enables users to send cash gifts 
 
 | Layer       | Technology                                       |
 | ----------- | ------------------------------------------------ |
-| Frontend    | Next.js 14 (App Router), TypeScript, Vanilla CSS |
+| Frontend    | Next.js 16 (App Router), TypeScript, Vanilla CSS |
 | Backend     | Next.js Route Handlers, server services layer    |
 | Blockchain  | Stellar, Soroban smart contracts (Rust)          |
 | Stablecoin  | USDC on Stellar                                  |
@@ -179,12 +179,15 @@ psql lumigift < migrations/0002_add_device_tracking.sql
 psql lumigift < migrations/0002_normalize_phone_e164.sql
 psql lumigift < migrations/0003_hash_recipient_phone.sql
 psql lumigift < migrations/0004_gift_invitations.sql
+psql lumigift < migrations/0005_audit_logs.sql
+psql lumigift < migrations/0006_add_user_roles.sql
+psql lumigift < migrations/0007_notification_preferences.sql
 
 # Set up Redis
 redis-server
 
 # Configure environment
-cp .env.example .env.local
+cp .env.local.example .env.local
 # Fill in your environment variables
 
 # Start development server

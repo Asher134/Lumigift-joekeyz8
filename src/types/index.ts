@@ -37,11 +37,22 @@ export interface Gift {
   contractId?: string; // Soroban escrow contract instance
   stellarTxHash?: string; // funding transaction hash
   claimTxHash?: string; // claim transaction hash
+  cancelledAt?: Date; // set when the sender cancels the gift
+  refundStatus?: RefundStatus; // refund progress after cancellation
   createdAt: Date;
   updatedAt: Date;
   /** Soft-delete timestamp. NULL = active. Set by softDeleteGift(). */
   deletedAt?: Date;
 }
+
+/**
+ * Refund progress for a cancelled gift.
+ * - `not_required` : the gift was cancelled before any payment was captured.
+ * - `pending`      : refund requested from the payment provider, not yet settled.
+ * - `processed`    : the provider confirmed the refund.
+ * - `failed`       : the provider rejected the refund — support must follow up.
+ */
+export type RefundStatus = "not_required" | "pending" | "processed" | "failed";
 
 // ─── Payment ──────────────────────────────────────────────────────────────────
 export type PaymentProvider = "paystack" | "stripe";
@@ -124,6 +135,36 @@ export interface ApiError {
 }
 
 export type ApiResponse<T> = ApiSuccess<T> | ApiError;
+
+// ─── Moderation (#149) ────────────────────────────────────────────────────────
+export type ModerationAction = "approved" | "removed";
+export type ModerationStatus = "pending" | "resolved";
+
+export interface MessageReport {
+  id: string;
+  giftId: string;
+  reporterId: string;
+  reason: string;
+  status: ModerationStatus;
+  action?: ModerationAction;
+  createdAt: Date;
+  resolvedAt?: Date;
+}
+
+// ─── Support (#152) ────────────────────────────────────────────────────────────
+export type SupportCaseStatus = "open" | "in_progress" | "resolved" | "closed";
+
+export interface SupportCase {
+  id: string;
+  caseReference: string;
+  userId: string;
+  giftId: string;
+  reason: string;
+  details?: string;
+  status: SupportCaseStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 // ─── Stellar ──────────────────────────────────────────────────────────────────
 export interface StellarAccount {

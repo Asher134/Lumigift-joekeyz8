@@ -1,0 +1,52 @@
+/* ─── Payment Status Page ─────────────────────────────────────────────────── */
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--space-16) var(--space-6);
+}
+
+.container {
+  width: 100%;
+  max-width: 540px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.title {
+  font-size: var(--text-2xl);
+  font-weight: var(--font-bold);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.loadingMsg {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.errorMsg {
+  font-size: var(--text-sm);
+  color: var(--color-error);
+}
+
+.successActions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.dashLink {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  align-self: flex-start;
+}
+
+.dashLink:hover {
+  color: var(--color-text-primary);
+}

@@ -4,9 +4,83 @@ coverage:
       default:
         target: 70%
         threshold: 1%   # allow up to 1% drop before failing
+
+      # ── Security-critical modules ───────────────────────────────────────────
+      security:
+        target: 80%
+        threshold: 1%
+        flags:
+          - security
+        paths:
+          - src/lib/auth.ts
+          - src/lib/otp.ts
+          - src/lib/csrf.ts
+          - src/lib/jwt-rotation.ts
+
+      # ── Money-moving modules ────────────────────────────────────────────────
+      payments:
+        target: 80%
+        threshold: 1%
+        flags:
+          - payments
+        paths:
+          - src/lib/paystack.ts
+          - src/lib/stellar.ts
+          - src/lib/contracts/escrow-client.ts
+          - src/server/services/payment-reconciliation.service.ts
+
+      # ── Core services ───────────────────────────────────────────────────────
+      services:
+        target: 75%
+        threshold: 2%
+        flags:
+          - services
+        paths:
+          - src/server/services/
+
     patch:
       default:
         target: 70%
+
+      security:
+        target: 80%
+        flags:
+          - security
+
+      payments:
+        target: 80%
+        flags:
+          - payments
+
+# ── Codecov flags ───────────────────────────────────────────────────────────
+# Each flag groups related source paths so Codecov reports thresholds
+# independently.  CI uploads must pass --flag=<name> (see .github/workflows/ci.yml).
+flags:
+  security:
+    paths:
+      - src/lib/auth.ts
+      - src/lib/otp.ts
+      - src/lib/csrf.ts
+      - src/lib/jwt-rotation.ts
+    carryforward: true
+
+  payments:
+    paths:
+      - src/lib/paystack.ts
+      - src/lib/stellar.ts
+      - src/lib/contracts/escrow-client.ts
+      - src/server/services/payment-reconciliation.service.ts
+    carryforward: true
+
+  services:
+    paths:
+      - src/server/services/
+    carryforward: true
+
+  middleware:
+    paths:
+      - src/server/middleware/
+    carryforward: true
 
 comment:
   layout: "reach,diff,flags,files"

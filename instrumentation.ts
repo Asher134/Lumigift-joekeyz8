@@ -5,6 +5,7 @@ export async function register() {
     validateEnv();
 
     const { logPoolMetrics, closePool } = await import("@/lib/db");
+    const { closeRedisClient } = await import("@/lib/redis");
     const { logger } = await import("@/lib/logger");
 
     logger.info("Application starting");
@@ -13,7 +14,9 @@ export async function register() {
     for (const sig of ["SIGTERM", "SIGINT"] as const) {
       process.once(sig, async () => {
         logger.info({ signal: sig }, "Shutting down");
-        await closePool();
+        // Close database pool and Redis client concurrently to drain
+        // in-flight requests within the shutdown grace period.
+        await Promise.allSettled([closePool(), closeRedisClient()]);
         process.exit(0);
       });
     }
