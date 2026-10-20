@@ -43,6 +43,8 @@
     "secrets:validate": "ts-node scripts/validate-production-secrets.ts",
     "test:visual": "playwright test --config=playwright.visual.config.ts",
     "test:visual:update": "playwright test --config=playwright.visual.config.ts --update-snapshots",
+    "storybook": "storybook dev -p 6006",
+    "storybook:build": "storybook build",
     "docker:up": "docker-compose up",
     "docker:up:dev": "docker-compose -f docker-compose.dev.yml up",
     "docker:down": "docker-compose down",

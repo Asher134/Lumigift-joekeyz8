@@ -169,33 +169,78 @@ This runbook provides procedures for handling common production incidents in Lum
 - Expiry processing doesn't run
 - Application logs missing cron execution entries
 - Vercel cron dashboard shows failures
+- `cron.dead_letter` structured log entries or Redis keys `cron:dead-letter:*` present
 
 ### Diagnosis Steps
 
-1. Check Vercel cron job status and logs
-2. Verify cron schedule configuration
-3. Test cron endpoints manually: `curl https://lumigift.com/api/cron/unlock`
-4. Check for long-running cron jobs blocking new executions
-5. Verify database connectivity from cron functions
+1. Check Vercel cron job status and logs in the project dashboard.
+2. Verify cron schedule configuration in `vercel.json`.
+3. Check for `cron.dead_letter` error logs (structured field `metric=cron.dead_letter`).
+4. Inspect Redis dead-letter keys: `redis-cli keys "cron:dead-letter:*"`.
+5. Test cron endpoints manually (see Manual Re-Trigger below).
+6. Check for long-running cron jobs blocking new executions.
+7. Verify database connectivity from cron functions.
+
+### Manual Re-Trigger
+
+Each cron route is a standard `GET` endpoint protected by `CRON_SECRET`. Re-trigger
+any job with `curl`:
+
+```bash
+# Unlock — every minute
+curl -X GET "https://lumigift.app/api/v1/cron/unlock" \
+  -H "Authorization: Bearer $CRON_SECRET"
+
+# Expire — daily at 02:00 UTC
+curl -X GET "https://lumigift.app/api/v1/cron/expire" \
+  -H "Authorization: Bearer $CRON_SECRET"
+
+# Reconcile — every 6 hours
+curl -X GET "https://lumigift.app/api/v1/cron/reconcile" \
+  -H "Authorization: Bearer $CRON_SECRET"
+
+# Index events — every 5 minutes
+curl -X GET "https://lumigift.app/api/v1/cron/index-events" \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+A `200` response means the job completed. A `401` means `CRON_SECRET` is wrong or
+missing. A `500` means the job threw — check the `cron.run` / `cron.dead_letter`
+logs and Sentry for the error, then re-trigger after fixing the cause.
+
+Dead-letter payloads are retained in Redis for 7 days and can be inspected to
+identify which job failed and why:
+
+```bash
+redis-cli get "cron:dead-letter:cron/v1/unlock"
+```
 
 ### Resolution Steps
 
 1. **Cron Function Errors**:
-   - Fix code issues and redeploy
-   - Manually trigger missed unlocks via admin interface
+   - Fix code issues and redeploy.
+   - Re-trigger the missed job manually (above).
+   - Manually apply missed work via the admin interface if needed.
 
 2. **Schedule Issues**:
-   - Update cron expressions in Vercel dashboard
-   - Adjust timezone settings if needed
+   - Update cron expressions in `vercel.json` / Vercel dashboard.
+   - Adjust timezone settings if needed.
 
 3. **Timeout Issues**:
-   - Optimize cron job performance
-   - Split large jobs into batches
+   - Optimize cron job performance.
+   - Split large jobs into batches.
+
+4. **Dead-Letter Recovery**:
+   - Review the dead-letter payload in Redis/Sentry.
+   - Fix the underlying failure.
+   - Re-trigger the specific job manually via curl.
 
 ### Escalation Path
 
-- If manual intervention needed: Escalate to engineering lead
-- If cron system down: Contact Vercel support
+- If manual intervention needed: Escalate to engineering lead.
+- If cron system down: Contact Vercel support.
+- P0 (`unlock` missed > 5 min, `index-events` missed > 15 min): On-call engineer immediately.
+- P1 (`reconcile` missed > 12 h, `expire` missed > 48 h): Engineering lead.
 
 ## Application Performance Degradation
 

@@ -196,6 +196,29 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+### Storybook (isolated component development)
+
+Lumigift uses [Storybook](https://storybook.js.org/) to develop and review UI
+components in isolation. Stories exist for `Button`, `Input`, `Badge`,
+`GiftCard`, `ClaimButton`, and `Dialog` under `src/components/**/*.stories.tsx`.
+
+```bash
+# Install Storybook dependencies (one-time)
+npx storybook init
+
+# Start the Storybook dev server on port 6006
+npm run storybook
+
+# Build the static Storybook bundle (used by CI)
+npm run storybook:build
+```
+
+The static build output is written to `storybook-static/`. Chromatic visual
+diffing can be enabled by adding the `chromatic` addon and a `CHROMATIC_TOKEN`
+secret to CI.
+
+---
+
 ### Smart Contract
 
 ```bash
