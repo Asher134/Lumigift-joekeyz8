@@ -11,8 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── jest-axe: component-level audits ────────────────────────────────────────
   axe-audit:
-    name: axe-core Accessibility Audit
+    name: axe-core Accessibility Audit (jest-axe)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -24,14 +25,20 @@ jobs:
 
       - run: npm ci --legacy-peer-deps
 
-      - name: Run accessibility tests (existing routes)
+      - name: Run accessibility tests (existing routes — /, /send, /dashboard, /auth/login, GiftCard)
         run: ./node_modules/.bin/jest src/app/__tests__/accessibility.test.tsx --no-coverage --json --outputFile=axe-results.json
         # Exit code non-zero if any critical/serious violation is found (test throws)
 
-      - name: Run accessibility regression gates (all routes — issue #128)
+      - name: Run accessibility regression gates (/help, /auth/register, Navbar, Button, Input, Dialog)
         run: ./node_modules/.bin/jest src/app/__tests__/accessibility-routes.test.tsx --no-coverage --json --outputFile=axe-routes-results.json
         # Covers /help, /auth/register, Navbar, Button, Input, Dialog.
         # Exceptions are tracked in docs/accessibility/known-violations.md.
+
+      - name: Run accessibility audit for all remaining routes
+        # Issue #293 — covers /notifications, /claim, and future routes
+        run: ./node_modules/.bin/jest src/app/__tests__/accessibility-all-routes.test.tsx --no-coverage --json --outputFile=axe-all-routes-results.json
+        # Zero critical/serious violations allowed. Add exceptions to
+        # KNOWN_EXCEPTION_RULES in the test file AND docs/accessibility/known-violations.md.
 
       - name: Upload axe results artifact
         if: always()
@@ -41,4 +48,64 @@ jobs:
           path: |
             axe-results.json
             axe-routes-results.json
+            axe-all-routes-results.json
+          retention-days: 30
+
+  # ── @axe-core/playwright: full-page E2E audits ───────────────────────────────
+  axe-e2e:
+    name: axe-core Accessibility Audit (Playwright E2E)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci --legacy-peer-deps
+
+      - name: Build app for Playwright
+        run: npm run build
+        env:
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          NEXT_PUBLIC_APP_NAME: Lumigift
+          NEXTAUTH_URL: http://localhost:3000
+          NEXTAUTH_SECRET: ci-test-secret-not-real
+          DATABASE_URL: postgresql://lumigift:lumigift@localhost:5432/lumigift_test
+          STELLAR_NETWORK: testnet
+          STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+          STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          STELLAR_ESCROW_CONTRACT_ID: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM
+          STELLAR_SERVER_SECRET_KEY: SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          STELLAR_RPC_URL: https://soroban-testnet.stellar.org
+          STELLAR_SERVER_PUBLIC_KEY: GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          USDC_ISSUER: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+          USDC_ASSET_CODE: USDC
+          PAYSTACK_SECRET_KEY: sk_test_placeholder
+          STRIPE_SECRET_KEY: sk_test_placeholder
+          STRIPE_WEBHOOK_SECRET: whsec_placeholder
+          TERMII_API_KEY: placeholder
+          REDIS_URL: redis://localhost:6379
+          CRON_SECRET: ci-cron-secret
+          CSRF_SECRET: ci-csrf-secret
+          CLOUDINARY_CLOUD_NAME: placeholder
+          CLOUDINARY_API_KEY: "000000000000000"
+          CLOUDINARY_API_SECRET: placeholder
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run axe-core E2E accessibility audit
+        # Issue #293 — runs @axe-core/playwright against all routes
+        run: npx playwright test e2e/accessibility-axe.spec.ts --project=chromium --reporter=html
+        env:
+          CI: "true"
+
+      - name: Upload Playwright axe report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: axe-playwright-report
+          path: playwright-report/
           retention-days: 30
