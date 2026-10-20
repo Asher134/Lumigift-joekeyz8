@@ -9,7 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Data export (`GET /api/v1/users/me/export`) and OTP-verified account erasure (`DELETE /api/v1/users/me`), both audited. Financial records are retained per the documented exceptions (#145)
+- Gift cancellation preview (`GET /api/v1/gifts/:id/cancel`), a confirmation dialog, and refund status with a support link on the sender's gift card (#147)
+- Recipient claim discovery page (`/claim`) and OTP-gated `POST /api/v1/gifts/discover` (#148)
+
 ### Changed
+
+- Cancellation eligibility now mirrors the escrow contract: cancellable until claimed, including after unlock (#147)
 
 ### Deprecated
 
@@ -17,7 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Misplaced `return otp;` in `sms.ts` that broke compilation of `gift.service` imports
+
 ### Security
+
+- Authenticated API penetration test report and regression tests, see `docs/security/pentest-2026-09.md` (#146)
+- Claim route no longer skips the recipient check for sessions without a phone (PT-01)
+- Cron routes fail closed when `CRON_SECRET` is unset (PT-05)
+- Phone registration lookup requires a session and is rate limited (PT-02)
+- Public gift view hides the amount, message and media until unlock (PT-03)
+- Media upload endpoints require a session (PT-04)
+- OTPs are generated with `crypto.randomInt` (PT-08)
 
 ---
 

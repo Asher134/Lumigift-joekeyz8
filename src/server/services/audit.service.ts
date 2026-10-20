@@ -9,7 +9,12 @@ export type AuditEventType =
   | "gift_claimed"
   | "gift_cancelled"
   | "payment_failed"
-  | "gift_refunded";
+  | "gift_refunded"
+  // Data subject requests (Issue #145)
+  | "data_export_requested"
+  | "data_deletion_requested"
+  | "data_deletion_completed"
+  | "data_deletion_rejected";
 
 export interface AuditLogEntry {
   eventType: AuditEventType;

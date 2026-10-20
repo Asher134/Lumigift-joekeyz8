@@ -156,6 +156,8 @@ If the key is suspected to be compromised, follow the same steps but with urgenc
 
 ## Related Documents
 
+- `docs/ops/production-secret-management.md` — Complete production secret management & rotation guide
 - `docs/ops/runbook.md` — General incident response
 - `docs/adr/0001-blockchain-stellar-soroban.md` — Stellar architecture decisions
 - `.env.example` — Environment variable reference
+

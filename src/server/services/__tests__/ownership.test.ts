@@ -14,6 +14,7 @@
 import { createHash } from "crypto";
 import type { Gift } from "@/types";
 import { hashPhone } from "../gift.service";
+import { getCancellationEligibility } from "../cancellation.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -62,23 +63,19 @@ describe("sender ownership check (cancel)", () => {
     expect(gift.senderId === userId).toBe(false);
   });
 
-  it("blocks cancellation for a gift in unlocked status (wrong state)", () => {
-    const gift = makeGift({ status: "unlocked" });
-    const cancellableStatuses: Array<Gift["status"]> = ["locked", "pending_payment"];
-    expect(cancellableStatuses.includes(gift.status)).toBe(false);
-  });
+  it.each(["pending_payment", "funded", "locked", "unlocked"] as const)(
+    "allows cancellation for %s status (mirrors contract: cancellable until claimed)",
+    (status) => {
+      expect(getCancellationEligibility(makeGift({ status })).eligible).toBe(true);
+    }
+  );
 
-  it("allows cancellation for locked status", () => {
-    const gift = makeGift({ status: "locked" });
-    const cancellableStatuses: Array<Gift["status"]> = ["locked", "pending_payment"];
-    expect(cancellableStatuses.includes(gift.status)).toBe(true);
-  });
-
-  it("allows cancellation for pending_payment status", () => {
-    const gift = makeGift({ status: "pending_payment" });
-    const cancellableStatuses: Array<Gift["status"]> = ["locked", "pending_payment"];
-    expect(cancellableStatuses.includes(gift.status)).toBe(true);
-  });
+  it.each(["claimed", "cancelled", "expired"] as const)(
+    "blocks cancellation for terminal %s status",
+    (status) => {
+      expect(getCancellationEligibility(makeGift({ status })).eligible).toBe(false);
+    }
+  );
 });
 
 // ─── Recipient ownership ──────────────────────────────────────────────────────
