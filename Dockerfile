@@ -1,73 +1,84 @@
+# ─── Global Arguments ────────────────────────────────────────────────────────
+ARG NODE_VERSION=20.18.3-alpine3.21
+
 # ─── Stage 1: Dependencies ────────────────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:${NODE_VERSION} AS deps
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files for deterministic dependency installation
 COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm ci --only=production && \
+# Install dependencies (clean npm cache to minimize layer size)
+RUN npm ci && \
     npm cache clean --force
 
 # ─── Stage 2: Builder ─────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:${NODE_VERSION} AS builder
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json package-lock.json ./
-
-# Install all dependencies (including devDependencies for build)
-RUN npm ci
-
-# Copy source code
+# Reuse node_modules from deps stage to speed up build
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Set build-time environment variables
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NODE_ENV=production
 
-# Build the Next.js application
+# Build the Next.js standalone application
 RUN npm run build
 
-# ─── Stage 3: Runner ──────────────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+# ─── Stage 3: Runner (Hardened Runtime) ─────────────────────────────────────────
+FROM node:${NODE_VERSION} AS runner
+
+# OCI Image Security & Metadata Labels
+LABEL org.opencontainers.image.title="Lumigift Application" \
+      org.opencontainers.image.description="Hardened production container for Lumigift" \
+      org.opencontainers.image.vendor="Lumigift" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.source="https://github.com/joekeyz8/Lumigift-lumigift"
 
 WORKDIR /app
 
 # Set runtime environment
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME="0.0.0.0" \
+    PORT=3000
 
-# Create non-root user for security
+# Install dumb-init for proper signal handling (SIGTERM/SIGINT) and zombie process reaping
+# Clean apk cache and remove temporary files to minimize attack surface
+RUN apk add --no-cache dumb-init=~1.2 && \
+    rm -rf /var/cache/apk/* /tmp/*
+
+# Create dedicated unprivileged system group and user
 RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+    adduser --system --uid 1001 -G nodejs nextjs
 
-# Copy necessary files from builder
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+# Pre-create app directory structure with correct ownership
+RUN mkdir -p /app/.next /app/public /app/migrations && \
+    chown -R nextjs:nodejs /app
 
-# Copy migrations for database setup
-COPY --from=builder /app/migrations ./migrations
+# Copy only minimal standalone artifacts with non-root ownership (prevents extra chown layer)
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/migrations ./migrations
 
-# Set ownership to non-root user
-RUN chown -R nextjs:nodejs /app
+# Switch to unprivileged non-root user
+USER nextjs:nodejs
 
-# Switch to non-root user
-USER nextjs
-
-# Expose port
+# Expose application port
 EXPOSE 3000
 
-# Set hostname
-ENV HOSTNAME="0.0.0.0"
-ENV PORT=3000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+# Container Health Check (uses Node.js built-in HTTP client - no curl/wget needed)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Start the application
+# Use dumb-init as init system for signal forwarding and PID 1 management
+ENTRYPOINT ["dumb-init", "--"]
+
+# Start Next.js standalone server
 CMD ["node", "server.js"]
+

@@ -1,4 +1,41 @@
+# Cargo Audit Configuration for Lumigift Smart Contracts
+# Documentation: https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
+#
+# Policy:
+# 1. Zero unreviewed advisories: all dependencies are audited in CI on every push/PR.
+# 2. Documented exceptions: any ignored advisory must have a documented rationale,
+#    assessed risk in the Soroban WASM / no_std runtime context, and review date.
+
 [advisories]
-# Add advisory IDs here to ignore known false positives, e.g.:
-# ignore = ["RUSTSEC-2023-XXXX"]
+# Ignored advisory IDs.
+# Format:
+#   ignore = [
+#     "RUSTSEC-YYYY-XXXX", # [crate-name] Rationale: <Reason why safe/inapplicable in WASM context>. Review by: <YYYY-MM-DD>
+#   ]
 ignore = []
+
+# Deny builds containing yanked crates
+yanked = "deny"
+
+# Treat unsound dependency advisories as build errors
+unsound = "deny"
+
+# Warn on unmaintained crates
+unmaintained = "warn"
+
+# Categorize informational warnings
+informational_warnings = ["unmaintained", "unsound", "notice"]
+
+# Minimum severity to trigger failure: "low", "medium", "high", "critical"
+severity_threshold = "low"
+
+[output]
+format = "text"
+quiet = false
+deny = ["unmaintained", "unsound"]
+
+[database]
+# Path to the advisory database git repository cache
+url = "https://github.com/rustsec/advisory-db.git"
+fetch = true
+stale = "warn"

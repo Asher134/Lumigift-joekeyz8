@@ -55,8 +55,8 @@ export async function sendOtp(phone: string): Promise<string> {
     channel: "generic",
     api_key: serverConfig.termii.apiKey,
   });
+  return otp;
 }
-return otp;
 
 /**
  * Sends a gift invitation SMS to an unregistered recipient.
