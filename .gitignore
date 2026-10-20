@@ -34,9 +34,14 @@ Thumbs.db
 
 # Testing
 coverage/
+test-results/
+playwright-report/
+**/__snapshots__/
+*.snap
 
 # Rust / Cargo (contracts)
 contracts/target/
+contracts/escrow/test_snapshots/
 
 # Misc
 *.tsbuildinfo
@@ -51,4 +56,6 @@ infra/terraform/.terraform.lock.hcl
 
 # Load test result files (uploaded as CI artifacts instead)
 load-tests/results/
-contracts/escrow/test_snapshots/
+
+# Kiro IDE
+.kiro/
