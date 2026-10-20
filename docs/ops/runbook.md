@@ -614,3 +614,79 @@ stellar contract invoke \
 | Double-transfer risk detected          | **STOP ALL OPERATIONS** — escalate to CTO                      |
 | Reconciliation mismatch > 10 gifts     | Engineering on-call — investigate event indexer                |
 | Stellar network outage                 | Monitor https://status.stellar.org/ — no action until restored |
+
+---
+
+## Chaos Engineering Tests (Issue #297)
+
+Lumigift runs a weekly chaos engineering suite that verifies the app degrades
+gracefully when Redis or Postgres becomes unavailable mid-request.
+
+### Infrastructure
+
+Chaos tests use [Toxiproxy](https://github.com/Shopify/toxiproxy) to proxy
+connections to Redis and Postgres. Toxiproxy lets the test runner inject
+failures (hard kill, timeout, latency) without restarting the real services.
+
+| Component           | Direct port | Toxiproxy port | Proxy name       |
+| ------------------- | ----------- | -------------- | ---------------- |
+| Postgres            | 5433        | 5434           | `chaos-postgres` |
+| Redis               | 6380        | 6381           | `chaos-redis`    |
+| Toxiproxy admin API | —           | 8474           | —                |
+
+### Running locally
+
+```bash
+# Start infrastructure
+docker compose -f chaos-tests/docker-compose.chaos.yml up -d
+
+# Run the full suite
+npm run chaos:test
+# Results written to chaos-results.json
+
+# Run individual suites
+CHAOS_MODE=1 npx jest chaos-tests/chaos-redis.test.ts --runInBand --forceExit
+CHAOS_MODE=1 npx jest chaos-tests/chaos-postgres.test.ts --runInBand --forceExit
+
+# Tear down
+docker compose -f chaos-tests/docker-compose.chaos.yml down
+```
+
+### CI schedule
+
+The chaos suite runs as a GitHub Actions optional step on a weekly schedule
+(Tuesdays, 06:00 UTC) via `.github/workflows/chaos-tests.yml`. It can also be
+triggered manually via the GitHub Actions UI (`workflow_dispatch`).
+
+Results are uploaded as CI artifacts and summarized in the GitHub step summary.
+
+### Redis failure policy (reference)
+
+The full Redis failure policy is documented in
+`docs/ops/redis-failure-policy.md`. Key rules tested by the chaos suite:
+
+| Operation                       | Expected behavior on Redis failure               |
+| ------------------------------- | ------------------------------------------------ |
+| OTP send (`/api/auth/send-otp`) | HTTP 503 — fail closed, no OTP delivered         |
+| OTP verification                | HTTP 503 — fail closed, no code accepted         |
+| Health check (`/api/health`)    | Returns response with `checks.redis: "degraded"` |
+
+### Postgres failure policy
+
+| Operation                           | Expected behavior on Postgres failure                                 |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| Any API read (e.g. `/api/v1/gifts`) | HTTP 503 or structured 500 — no stack trace in response               |
+| Health check                        | Returns response with `checks.database: "degraded"` (not a 500 crash) |
+| Recovery                            | Requests succeed within one connection-pool cycle after restore       |
+
+### Chaos test results log
+
+| Date                | Redis suite | Postgres suite | Notes                                  |
+| ------------------- | ----------- | -------------- | -------------------------------------- |
+| _First run pending_ | —           | —              | CI weekly job will populate this table |
+
+> **Policy:** If a chaos test fails in CI, create an incident issue and
+> investigate within the P2 response window (4 hours). Update this table with
+> the outcome once resolved.
+
+_Section added 2026-10-20 — Issue #297_
