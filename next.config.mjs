@@ -6,6 +6,13 @@ const nextConfig = {
   output: "standalone",
   // Moved out of experimental in Next.js 15+
   serverExternalPackages: ["@stellar/stellar-sdk"],
+  experimental: {
+    // Cap Server Action body payloads to 1 MB (default is 1 MB; set
+    // explicitly so the limit is visible and documented).
+    serverActions: {
+      bodySizeLimit: "1mb",
+    },
+  },
   images: {
     remotePatterns: [
       {

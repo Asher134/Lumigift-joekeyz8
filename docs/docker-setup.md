@@ -347,22 +347,35 @@ services:
 - Use layer caching effectively
 - Minimize image size by removing dev dependencies
 
-## Security Best Practices
+## Security Best Practices & Hardening
 
-✅ **Implemented:**
+✅ **Implemented in Production:**
 
-- Non-root user in production image
-- Minimal base image (Alpine Linux)
-- Health checks for all services
-- No secrets in Dockerfile or docker-compose.yml
+- **Non-Root Execution**: Runs as dedicated `nextjs:nodejs` (UID 1001, GID 1001).
+- **Pinned Base Images**: Immutable pinned tags (`node:20.18.3-alpine3.21`, `postgres:16.8-alpine3.21`, `redis:7.4.2-alpine3.21`).
+- **Minimized Attack Surface**: Next.js standalone output without devDependencies, compilers, git, or test runners.
+- **Process Management**: `dumb-init` (PID 1) for signal forwarding and zombie process reaping.
+- **Supply Chain & SBOM**: Automated SPDX and CycloneDX SBOM generation via Anchore Syft.
+- **Vulnerability Scanning**: Automated Trivy vulnerability scans and Dockle CIS compliance checks in CI/CD (`.github/workflows/docker-security.yml`).
+- **Runtime Privilege Escalation Prevention**: `security_opt: ["no-new-privileges:true"]` and `cap_drop: ["ALL"]` in `docker-compose.yml`.
 
-⚠️ **Additional Recommendations:**
+### Docker Security Commands
 
-- Scan images for vulnerabilities: `docker scan lumigift-app`
-- Use Docker secrets in production
-- Enable Docker Content Trust
-- Regularly update base images
-- Use read-only file systems where possible
+```bash
+# Run comprehensive local Docker security check
+npm run docker:check
+
+# Lint Dockerfile
+npm run docker:lint
+
+# Scan image for vulnerabilities with Trivy
+npm run docker:scan
+
+# Generate SPDX & CycloneDX SBOM
+npm run docker:sbom
+```
+
+For full architectural details, see [docs/ops/docker-hardening.md](ops/docker-hardening.md).
 
 ## Further Reading
 

@@ -7,6 +7,7 @@ import {
   getGiftsBySenderPaginated,
   getGiftsBySenderPage,
 } from "@/server/services/gift.service";
+import { decodeGiftCursor, encodeGiftCursor } from "@/server/services/gift-cursor";
 import { withErrorHandler, withCsrf } from "@/server/middleware";
 import {
   checkIdempotencyKey,
@@ -45,90 +46,102 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     return NextResponse.json<ApiResponse<GiftPageOffset>>({ success: true, data: result });
   }
 
-  // Cursor-based pagination (legacy)
-  const cursor = searchParams.get("cursor");
+  // Cursor pagination uses a signed, sender-bound snapshot position.
+  const cursorToken = searchParams.get("cursor");
+  const cursor = cursorToken ? decodeGiftCursor(cursorToken, userId) : null;
+  if (cursorToken && !cursor) {
+    return NextResponse.json<ApiResponse<never>>(
+      { success: false, error: "Invalid gift cursor", code: "VALIDATION_ERROR" },
+      { status: 400 }
+    );
+  }
+
   const pageSize = Math.min(
     MAX_LIMIT,
     Math.max(1, parseInt(searchParams.get("pageSize") ?? "10", 10) || 10)
   );
   const page = await getGiftsBySenderPaginated(userId, cursor, pageSize);
-  return NextResponse.json<ApiResponse<GiftPage>>({ success: true, data: page });
+  return NextResponse.json<ApiResponse<GiftPage>>({
+    success: true,
+    data: {
+      gifts: page.gifts,
+      total: page.total,
+      nextCursor: page.nextCursor ? encodeGiftCursor(userId, page.nextCursor) : null,
+    },
+  });
 });
 
 export const POST = withErrorHandler(
-  withCsrf(async (req: NextRequest) => {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
-      return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: "Unauthorized" },
-        { status: 401 }
+  withBodySizeLimit(64 * 1024)(
+    withCsrf(async (req: NextRequest) => {
+      const session = await getServerSession(authOptions);
+      if (!session?.user) {
+        return NextResponse.json<ApiResponse<never>>(
+          { success: false, error: "Unauthorized" },
+          { status: 401 }
+        );
+      }
+
+    const validation = await validateBody(req, createGiftSchema);
+    if (!validation.success) return validation.response;
+    const parsed = validation;
+
+      const userId = (session.user as { id: string }).id;
+      const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
+
+      // ── Idempotency check ─────────────────────────────────────────────────────
+      const idempotencyResult = await checkIdempotencyKey(idempotencyKey, userId, parsed.data);
+
+      if (idempotencyResult.type === "invalid") {
+        return NextResponse.json<ApiResponse<never>>(
+          {
+            success: false,
+            error: "Idempotency-Key must be a valid UUID v4",
+            code: "VALIDATION_ERROR",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (idempotencyResult.type === "conflict") {
+        return NextResponse.json<ApiResponse<never>>(
+          {
+            success: false,
+            error: "Idempotency key already used with a different payload",
+            code: "IDEMPOTENCY_CONFLICT",
+          },
+          { status: 409 }
+        );
+      }
+
+      if (idempotencyResult.type === "replay") {
+        // Return the original response — gift was already created
+        return NextResponse.json(idempotencyResult.body, { status: idempotencyResult.status });
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+
+      const { gift, paymentUrl } = await createGift(
+        userId,
+        parsed.data,
+        parsed.data.recipientIsRegistered
       );
-    }
 
-    const body = await req.json();
-    const parsed = createGiftSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: parsed.error.issues[0].message },
-        { status: 400 }
-      );
-    }
+      const responseBody: ApiResponse<{ gift: Gift; paymentUrl: string }> = {
+        success: true,
+        data: { gift, paymentUrl },
+      };
 
-    const userId = (session.user as { id: string }).id;
-    const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);
+      // Store the response only when an idempotency key was provided
+      if (idempotencyResult.type === "new") {
+        await storeIdempotencyResponse(
+          idempotencyResult.redisKey,
+          idempotencyResult.payloadHash,
+          201,
+          responseBody
+        );
+      }
 
-    // ── Idempotency check ─────────────────────────────────────────────────────
-    const idempotencyResult = await checkIdempotencyKey(idempotencyKey, userId, parsed.data);
-
-    if (idempotencyResult.type === "invalid") {
-      return NextResponse.json<ApiResponse<never>>(
-        {
-          success: false,
-          error: "Idempotency-Key must be a valid UUID v4",
-          code: "VALIDATION_ERROR",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (idempotencyResult.type === "conflict") {
-      return NextResponse.json<ApiResponse<never>>(
-        {
-          success: false,
-          error: "Idempotency key already used with a different payload",
-          code: "IDEMPOTENCY_CONFLICT",
-        },
-        { status: 409 }
-      );
-    }
-
-    if (idempotencyResult.type === "replay") {
-      // Return the original response — gift was already created
-      return NextResponse.json(idempotencyResult.body, { status: idempotencyResult.status });
-    }
-    // ─────────────────────────────────────────────────────────────────────────
-
-    const { gift, paymentUrl } = await createGift(
-      userId,
-      parsed.data,
-      parsed.data.recipientIsRegistered
-    );
-
-    const responseBody: ApiResponse<{ gift: Gift; paymentUrl: string }> = {
-      success: true,
-      data: { gift, paymentUrl },
-    };
-
-    // Store the response only when an idempotency key was provided
-    if (idempotencyResult.type === "new") {
-      await storeIdempotencyResponse(
-        idempotencyResult.redisKey,
-        idempotencyResult.payloadHash,
-        201,
-        responseBody
-      );
-    }
-
-    return NextResponse.json(responseBody, { status: 201 });
-  })
+      return NextResponse.json(responseBody, { status: 201 });
+    })
+  )
 );

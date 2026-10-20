@@ -1,5 +1,7 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { withErrorHandler, withCsrf } from "@/server/middleware";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -23,6 +25,16 @@ function sign(params: Record<string, string | number>): string {
 
 export const POST = withErrorHandler(
   withCsrf(async (_req: NextRequest) => {
+    // Signed upload params let the holder write to our Cloudinary account, so
+    // only signed-in users get them (pentest finding PT-04).
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized", code: "UNAUTHORIZED" },
+        { status: 401 }
+      );
+    }
+
     const timestamp = Math.floor(Date.now() / 1000);
 
     const params: Record<string, string | number> = {
