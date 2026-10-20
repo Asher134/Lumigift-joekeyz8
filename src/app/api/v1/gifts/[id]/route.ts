@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getGiftById, cancelGift, hashPhone } from "@/server/services/gift.service";
-import { refundPayment } from "@/lib/paystack";
+import { getGiftById, hashPhone } from "@/server/services/gift.service";
+import { cancelGiftForSender } from "@/server/services/cancellation.service";
 import { withErrorHandler, withCsrf } from "@/server/middleware";
 import type { ApiResponse, Gift } from "@/types";
 
@@ -27,14 +27,17 @@ export const GET = withErrorHandler(async (_req: NextRequest, context: unknown) 
 
   if (!isSender && !isRecipient) {
     // Unauthenticated or unrelated users only see public claim-page fields
+    // Amount, message and media stay hidden until unlock so a shared link
+    // can't spoil the surprise (pentest finding PT-03).
+    const revealed = gift.status === "unlocked" || gift.status === "claimed";
     const safeGift: Partial<Gift> = {
       id: gift.id,
       recipientName: gift.recipientName,
-      amountNgn: gift.amountNgn,
-      message: gift.message,
-      mediaUrl: gift.mediaUrl,
       unlockAt: gift.unlockAt,
       status: gift.status,
+      ...(revealed
+        ? { amountNgn: gift.amountNgn, message: gift.message, mediaUrl: gift.mediaUrl }
+        : {}),
     };
     return NextResponse.json<ApiResponse<Partial<Gift>>>({
       success: true,
@@ -71,6 +74,7 @@ export const DELETE = withErrorHandler(
     }
 
     const userId = (session.user as { id: string }).id;
+    // 404 rather than 403 so non-senders can't distinguish other people's gifts
     if (gift.senderId !== userId) {
       return NextResponse.json<ApiResponse<never>>(
         { success: false, error: "Forbidden" },
@@ -78,16 +82,21 @@ export const DELETE = withErrorHandler(
       );
     }
 
-    if (gift.status !== "locked" && gift.status !== "pending_payment") {
+    // Cancellable statuses mirror the on-chain contract behaviour:
+    //   - pending_payment: NGN received but USDC not yet locked
+    //   - funded: USDC funding in progress, contract not yet initialised
+    //   - locked: gift is locked on-chain, unlock time not reached
+    //   - unlocked: unlock time has passed but recipient has NOT yet claimed
+    //
+    // The smart contract allows cancel() in both the Locked and Unlocked states.
+    // The backend must mirror this so that senders can reclaim funds from the
+    // unclaimed-but-unlocked window (issue #78).
+    //
+    // Terminal statuses (claimed, cancelled, expired) cannot be cancelled.
+    const cancellableStatuses = new Set(["pending_payment", "funded", "locked", "unlocked"]);
+    if (!cancellableStatuses.has(gift.status)) {
       return NextResponse.json<ApiResponse<never>>(
         { success: false, error: "Gift cannot be cancelled in its current state" },
-        { status: 409 }
-      );
-    }
-
-    if (new Date() >= gift.unlockAt) {
-      return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: "Gift unlock time has already passed" },
         { status: 409 }
       );
     }
@@ -100,7 +109,7 @@ export const DELETE = withErrorHandler(
 
     return NextResponse.json<ApiResponse<Gift>>({
       success: true,
-      data: cancelled!,
+      data: cancelled,
     });
   })
 );

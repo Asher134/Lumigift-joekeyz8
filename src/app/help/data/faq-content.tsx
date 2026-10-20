@@ -293,7 +293,7 @@ export const faqContent: FAQContent = {
           id: "refund-process",
           question: "How do refunds work?",
           answer:
-            "When you cancel a gift, the full NGN amount is refunded to your original payment method via Paystack. Refunds typically process within 3-5 business days, though this depends on your bank. You'll receive an email confirmation when the refund is initiated.",
+            "When you cancel a gift, the full NGN amount is refunded to your original payment method via Paystack. Refunds typically process within 3-5 business days, though this depends on your bank. You'll receive an email confirmation when the refund is initiated, and the gift card on your dashboard shows the refund status (in progress, completed, or needs attention). If a refund needs attention, contact support and quote the gift ID.",
         },
         {
           id: "cannot-cancel",

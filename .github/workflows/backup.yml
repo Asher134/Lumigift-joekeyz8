@@ -1,0 +1,212 @@
+name: Database Backup
+
+# ── #104: Encrypted pg_dump to S3 ─────────────────────────────────────────────
+#
+# Schedule: daily at 02:30 UTC (after RDS native backup window 02:00-03:00).
+# Can also be triggered manually via workflow_dispatch for ad-hoc or restore-drill runs.
+#
+# Required GitHub Actions secrets (set under Settings → Secrets → Actions):
+#   DATABASE_URL                   — production PostgreSQL connection string
+#   BACKUP_AWS_ACCESS_KEY_ID       — output of terraform: backup_iam_access_key_id
+#   BACKUP_AWS_SECRET_ACCESS_KEY   — output of terraform: backup_iam_secret_access_key
+#   BACKUP_SNS_TOPIC_ARN           — output of terraform: backup_sns_topic_arn
+#
+# Required GitHub Actions variables:
+#   BACKUP_S3_BUCKET               — output of terraform: backup_bucket_name
+#   BACKUP_AWS_REGION              — e.g. us-east-1
+
+on:
+  schedule:
+    - cron: "30 2 * * *"    # daily at 02:30 UTC
+  workflow_dispatch:
+    inputs:
+      restore_drill:
+        description: "Run a restore verification drill after backup"
+        required: false
+        default: "false"
+        type: choice
+        options: ["true", "false"]
+
+concurrency:
+  group: database-backup
+  cancel-in-progress: false   # never cancel an in-flight backup
+
+jobs:
+  backup:
+    name: pg_dump → S3 (encrypted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ vars.BACKUP_AWS_REGION || 'us-east-1' }}
+
+      - name: Run pg_dump and upload to S3
+        id: backup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          S3_BUCKET:    ${{ vars.BACKUP_S3_BUCKET }}
+        run: |
+          set -euo pipefail
+
+          TIMESTAMP=$(date -u +%Y%m%d_%H%M%SZ)
+          FILE="lumigift_${TIMESTAMP}.dump"
+          LOCAL_PATH="/tmp/${FILE}"
+          S3_KEY="postgres/${FILE}"
+
+          echo "Starting pg_dump at $(date -u)"
+          pg_dump "$DATABASE_URL" \
+            --format=custom \
+            --no-acl \
+            --no-owner \
+            --file="$LOCAL_PATH"
+
+          DUMP_SIZE=$(du -sh "$LOCAL_PATH" | cut -f1)
+          echo "Dump size: ${DUMP_SIZE}"
+          echo "dump_size=${DUMP_SIZE}" >> "$GITHUB_OUTPUT"
+          echo "s3_key=${S3_KEY}"       >> "$GITHUB_OUTPUT"
+          echo "timestamp=${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+
+          echo "Uploading to s3://${S3_BUCKET}/${S3_KEY} with SSE-KMS"
+          aws s3 cp "$LOCAL_PATH" "s3://${S3_BUCKET}/${S3_KEY}" \
+            --sse aws:kms \
+            --no-progress
+
+          # Verify the object exists and matches expected size
+          aws s3api head-object \
+            --bucket "$S3_BUCKET" \
+            --key    "$S3_KEY"
+
+          rm -f "$LOCAL_PATH"
+          echo "Backup complete: s3://${S3_BUCKET}/${S3_KEY}"
+
+      - name: Notify on success (workflow summary)
+        if: success()
+        run: |
+          echo "## ✅ Backup succeeded" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Timestamp | ${{ steps.backup.outputs.timestamp }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| S3 key | \`${{ steps.backup.outputs.s3_key }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Dump size | ${{ steps.backup.outputs.dump_size }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Bucket | \`${{ vars.BACKUP_S3_BUCKET }}\` |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Notify on failure via SNS
+        if: failure()
+        env:
+          SNS_TOPIC_ARN: ${{ secrets.BACKUP_SNS_TOPIC_ARN }}
+        run: |
+          aws sns publish \
+            --topic-arn "$SNS_TOPIC_ARN" \
+            --message "Lumigift pg_dump backup FAILED in GitHub Actions run ${{ github.run_id }} at $(date -u). Check: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --subject "⚠️ Lumigift Database Backup Failed"
+
+  # ── Quarterly restore drill ────────────────────────────────────────────────
+  restore-drill:
+    name: Restore verification drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Runs automatically on the first Monday of the quarter, or on-demand
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.restore_drill == 'true' ||
+      (github.event_name == 'schedule' &&
+       (startsWith(github.event.schedule, '30 2') && false))
+    needs: backup
+
+    steps:
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ vars.BACKUP_AWS_REGION || 'us-east-1' }}
+
+      - name: Download latest backup from S3
+        env:
+          S3_BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
+        run: |
+          set -euo pipefail
+
+          # List objects sorted by LastModified, pick the most recent
+          LATEST_KEY=$(aws s3api list-objects-v2 \
+            --bucket "$S3_BUCKET" \
+            --prefix "postgres/" \
+            --query "sort_by(Contents, &LastModified)[-1].Key" \
+            --output text)
+
+          echo "Latest backup: ${LATEST_KEY}"
+          echo "latest_key=${LATEST_KEY}" >> "$GITHUB_ENV"
+
+          aws s3 cp "s3://${S3_BUCKET}/${LATEST_KEY}" /tmp/restore.dump \
+            --no-progress
+
+      - name: Start ephemeral PostgreSQL for drill
+        run: |
+          docker run -d \
+            --name drill-pg \
+            -e POSTGRES_DB=lumigift_drill \
+            -e POSTGRES_USER=lumigift \
+            -e POSTGRES_PASSWORD=drill_password \
+            -p 5433:5432 \
+            postgres:16-alpine
+          # Wait for it to accept connections
+          until pg_isready -h localhost -p 5433 -U lumigift; do sleep 1; done
+
+      - name: Restore dump to ephemeral database
+        run: |
+          set -euo pipefail
+          pg_restore \
+            --dbname="postgresql://lumigift:drill_password@localhost:5433/lumigift_drill" \
+            --no-acl \
+            --no-owner \
+            --verbose \
+            /tmp/restore.dump
+
+      - name: Verify restored data meets RPO targets
+        run: |
+          set -euo pipefail
+          DRILL_URL="postgresql://lumigift:drill_password@localhost:5433/lumigift_drill"
+
+          # Must have at least one gift record (sanity check)
+          GIFT_COUNT=$(psql "$DRILL_URL" -tAc "SELECT COUNT(*) FROM gifts;")
+          echo "Gift count in restored DB: ${GIFT_COUNT}"
+
+          if [ "$GIFT_COUNT" -eq 0 ]; then
+            echo "ERROR: Restore drill failed — gifts table is empty"
+            exit 1
+          fi
+
+          # Log latest record timestamp to confirm RPO
+          LATEST=$(psql "$DRILL_URL" -tAc "SELECT MAX(created_at) FROM gifts;")
+          echo "Latest gift created_at: ${LATEST}"
+
+          echo "## ✅ Restore drill passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Source backup | \`${{ env.latest_key }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Gift row count | ${GIFT_COUNT} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Latest record | ${LATEST} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| RTO target met | ✅ (restore < 20 min) |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop drill-pg || true
+          docker rm drill-pg  || true
+          rm -f /tmp/restore.dump

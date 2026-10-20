@@ -16,9 +16,30 @@ const redisMock = {
   expire: jest.fn(),
 };
 
-jest.mock("@/lib/redis", () => ({
-  getRedisClient: jest.fn(),
-}));
+jest.mock("@/lib/redis", () => {
+  const getRedisClient = jest.fn();
+  class RedisUnavailableError extends Error {
+    readonly operation: string;
+
+    constructor(operation: string, options?: ErrorOptions) {
+      super("Redis is unavailable", options);
+      this.name = "RedisUnavailableError";
+      this.operation = operation;
+    }
+  }
+
+  return {
+    getRedisClient,
+    RedisUnavailableError,
+    withRedis: async (operation: string, action: (_redis: unknown) => Promise<unknown>) => {
+      try {
+        return await action(await getRedisClient());
+      } catch (err) {
+        throw new RedisUnavailableError(operation, { cause: err });
+      }
+    },
+  };
+});
 
 // ─── Wire up implementations after mock is registered ────────────────────────
 
@@ -99,6 +120,15 @@ describe("storeOtp", () => {
     expect(redisMock.del).toHaveBeenCalledWith(`otp:attempts:${PHONE}`);
     expect(store.has(`otp:attempts:${PHONE}`)).toBe(false);
   });
+
+  it("fails closed when Redis cannot persist the OTP", async () => {
+    redisMock.set.mockRejectedValueOnce(new Error("connection refused"));
+
+    await expect(storeOtp(PHONE, VALID_OTP)).rejects.toMatchObject({
+      name: "RedisUnavailableError",
+      operation: "otp_store",
+    });
+  });
 });
 
 describe("verifyOtp — success", () => {
@@ -158,6 +188,17 @@ describe("verifyOtp — expired OTP", () => {
   });
 });
 
+describe("verifyOtp — Redis outage", () => {
+  it("does not authenticate when Redis verification fails", async () => {
+    redisMock.get.mockRejectedValueOnce(new Error("connection refused"));
+
+    await expect(verifyOtp(PHONE, VALID_OTP)).rejects.toMatchObject({
+      name: "RedisUnavailableError",
+      operation: "otp_verify",
+    });
+  });
+});
+
 describe("verifyOtp — rate limiting", () => {
   it("locks the account after MAX_ATTEMPTS (5) failed attempts", async () => {
     await seedOtp();
@@ -189,5 +230,16 @@ describe("verifyOtp — rate limiting", () => {
 
     const result = await verifyOtp(PHONE, VALID_OTP);
     expect(result.success).toBe(false);
+  });
+});
+
+// ─── PT-08: OTPs come from a CSPRNG ───────────────────────────────────────────
+describe("generateOtp", () => {
+  it("does not use Math.random and always yields 6 digits", () => {
+    const { generateOtp } = jest.requireActual<typeof import("@/lib/otp")>("@/lib/otp");
+    const spy = jest.spyOn(Math, "random");
+    for (let i = 0; i < 200; i++) expect(generateOtp()).toMatch(/^\d{6}$/);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });

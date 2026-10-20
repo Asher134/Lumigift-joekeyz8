@@ -103,8 +103,10 @@ Transfers the locked funds to `recipient`.
 
 - Contract must be initialized (`NotInitialized`)
 - Caller must be `recipient` (enforced via `require_auth`)
-- `ledger.timestamp() >= unlock_time` (`StillLocked`)
+- `ledger.timestamp() >= unlock_time` (`StillLocked` if `< unlock_time`)
 - Funds must not already be claimed (`AlreadyClaimed`)
+
+> **Timestamp Boundary Semantics:** Claiming is valid **inclusive** of `unlock_time` (`ledger.timestamp >= unlock_time`). For full specification and backend parity details, see [docs/architecture/timestamp-boundary-semantics.md](../../docs/architecture/timestamp-boundary-semantics.md).
 
 **Atomicity:** `Claimed` is set to `true` _before_ the token transfer to prevent
 re-entrancy and double-claim attacks.
@@ -133,9 +135,22 @@ Fails with `NotInitialized` if `initialize` has not been called.
 # Build WASM
 npm run contract:build          # from repo root
 
-# Run all contract tests
-cd contracts && cargo test
+# Run all contract tests (with locked dependencies)
+npm run contract:test           # cd contracts && cargo test --locked
+
+# Audit contract dependencies against RustSec advisory database
+npm run contract:audit          # cd contracts && cargo audit --deny warnings
 
 # Run only double-claim tests
-cd contracts && cargo test double_claim
+cd contracts && cargo test --locked double_claim
 ```
+
+---
+
+## Dependency & `Cargo.lock` Policy
+
+- `Cargo.lock` is strictly pinned and committed to version control.
+- All CI and local test/build runs must use `--locked`.
+- Security vulnerabilities are audited via `cargo-audit` in CI.
+- For the full policy and exception procedure, see [docs/ops/cargo-lock-policy.md](../../docs/ops/cargo-lock-policy.md).
+

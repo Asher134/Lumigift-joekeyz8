@@ -1,12 +1,24 @@
+# Production / Hardened Docker Compose Configuration
+#
+# SECURITY NOTE:
+# This compose file requires all sensitive credentials to be supplied from a managed secret store
+# (e.g., AWS Secrets Manager, HashiCorp Vault, or environment injection in CI/CD).
+# Embedded defaults and placeholders are strictly prohibited and will prevent container startup.
+#
+# For local offline development with mock defaults, use:
+#   docker-compose -f docker-compose.dev.yml up
+
 services:
   # ─── PostgreSQL Database ────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.8-alpine3.21
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
-      POSTGRES_USER: lumigift
-      POSTGRES_PASSWORD: lumigift_dev_password
-      POSTGRES_DB: lumigift
+      POSTGRES_USER: ${POSTGRES_USER:-lumigift}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Error: POSTGRES_PASSWORD must be provided from managed secret store}
+      POSTGRES_DB: ${POSTGRES_DB:-lumigift}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
@@ -14,7 +26,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lumigift -d lumigift"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lumigift} -d ${POSTGRES_DB:-lumigift}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -23,8 +35,10 @@ services:
 
   # ─── Redis Cache/Queue ──────────────────────────────────────────────────────
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.2-alpine3.21
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "6379:6379"
     command: >
@@ -33,6 +47,7 @@ services:
       --appendfsync everysec
       --appendfilename appendonly.aof
       --dir /data
+      ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
     volumes:
       - redis-data:/data
     healthcheck:
@@ -43,63 +58,69 @@ services:
     networks:
       - lumigift-network
 
-  # ─── Next.js Application ────────────────────────────────────────────────────
+  # ─── Next.js Application (Hardened Production) ──────────────────────────────
   app:
     build:
       context: .
       dockerfile: Dockerfile
       target: runner
     restart: unless-stopped
+    user: "1001:1001"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "3000:3000"
     environment:
       # App
-      - NEXT_PUBLIC_APP_URL=http://localhost:3000
-      - NEXT_PUBLIC_APP_NAME=Lumigift
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      - NEXT_PUBLIC_APP_NAME=${NEXT_PUBLIC_APP_NAME:-Lumigift}
       - NODE_ENV=production
       
       # Auth
-      - NEXTAUTH_URL=http://localhost:3000
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-replace_with_a_strong_random_secret}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:?Error: NEXTAUTH_SECRET must be supplied from managed secret store}
       - NEXTAUTH_SECRET_PREVIOUS=${NEXTAUTH_SECRET_PREVIOUS:-}
       - NEXTAUTH_ROTATION_GRACE_HOURS=${NEXTAUTH_ROTATION_GRACE_HOURS:-24}
+      - CSRF_SECRET=${CSRF_SECRET:?Error: CSRF_SECRET must be supplied from managed secret store}
       
-      # Database (connects to postgres service)
-      - DATABASE_URL=postgresql://lumigift:lumigift_dev_password@postgres:5432/lumigift
+      # Database
+      - DATABASE_URL=${DATABASE_URL:?Error: DATABASE_URL must be supplied from managed secret store}
       - DB_POOL_MIN=${DB_POOL_MIN:-2}
       - DB_POOL_MAX=${DB_POOL_MAX:-10}
       - DB_IDLE_TIMEOUT_MS=${DB_IDLE_TIMEOUT_MS:-10000}
       - DB_CONNECTION_TIMEOUT_MS=${DB_CONNECTION_TIMEOUT_MS:-5000}
       
-      # Redis (connects to redis service)
-      - REDIS_URL=redis://redis:6379
+      # Redis
+      - REDIS_URL=${REDIS_URL:?Error: REDIS_URL must be supplied from managed secret store}
       
       # Stellar / Soroban
-      - STELLAR_NETWORK=${STELLAR_NETWORK:-testnet}
-      - STELLAR_HORIZON_URL=${STELLAR_HORIZON_URL:-https://horizon-testnet.stellar.org}
-      - STELLAR_NETWORK_PASSPHRASE=${STELLAR_NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
-      - STELLAR_ESCROW_CONTRACT_ID=${STELLAR_ESCROW_CONTRACT_ID:-}
-      - STELLAR_SERVER_SECRET_KEY=${STELLAR_SERVER_SECRET_KEY:-}
-      - STELLAR_RPC_URL=${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
-      - STELLAR_SERVER_PUBLIC_KEY=${STELLAR_SERVER_PUBLIC_KEY:-}
+      - STELLAR_NETWORK=${STELLAR_NETWORK:-mainnet}
+      - STELLAR_HORIZON_URL=${STELLAR_HORIZON_URL:-https://horizon.stellar.org}
+      - STELLAR_NETWORK_PASSPHRASE=${STELLAR_NETWORK_PASSPHRASE:-Public Global Stellar Network ; September 2015}
+      - STELLAR_ESCROW_CONTRACT_ID=${STELLAR_ESCROW_CONTRACT_ID:?Error: STELLAR_ESCROW_CONTRACT_ID must be supplied}
+      - STELLAR_SERVER_SECRET_KEY=${STELLAR_SERVER_SECRET_KEY:?Error: STELLAR_SERVER_SECRET_KEY must be supplied from managed secret store}
+      - STELLAR_RPC_URL=${STELLAR_RPC_URL:-https://soroban-rpc.mainnet.stellar.org}
+      - STELLAR_SERVER_PUBLIC_KEY=${STELLAR_SERVER_PUBLIC_KEY:?Error: STELLAR_SERVER_PUBLIC_KEY must be supplied}
       
       # USDC
-      - USDC_ISSUER=${USDC_ISSUER:-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5}
+      - USDC_ISSUER=${USDC_ISSUER:-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN}
       - USDC_ASSET_CODE=${USDC_ASSET_CODE:-USDC}
       
       # Payments
-      - PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY:-}
-      - NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY=${NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY:-}
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
-      - NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY:?Error: PAYSTACK_SECRET_KEY must be supplied from managed secret store}
+      - NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY=${NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY:?Error: NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY must be supplied}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:?Error: STRIPE_SECRET_KEY must be supplied from managed secret store}
+      - NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:?Error: NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY must be supplied}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:?Error: STRIPE_WEBHOOK_SECRET must be supplied from managed secret store}
       
       # SMS / OTP
-      - TERMII_API_KEY=${TERMII_API_KEY:-}
+      - TERMII_API_KEY=${TERMII_API_KEY:?Error: TERMII_API_KEY must be supplied from managed secret store}
       - TERMII_SENDER_ID=${TERMII_SENDER_ID:-Lumigift}
       
       # Cron
-      - CRON_SECRET=${CRON_SECRET:-}
+      - CRON_SECRET=${CRON_SECRET:?Error: CRON_SECRET must be supplied from managed secret store}
       
       # Gift Limits
       - GIFT_MIN_AMOUNT_NGN=${GIFT_MIN_AMOUNT_NGN:-500}
@@ -107,9 +128,9 @@ services:
       - GIFT_DAILY_LIMIT_NGN=${GIFT_DAILY_LIMIT_NGN:-1000000}
       
       # Cloudinary
-      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME:-}
-      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY:-}
-      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET:-}
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME:?Error: CLOUDINARY_CLOUD_NAME must be supplied}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY:?Error: CLOUDINARY_API_KEY must be supplied}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET:?Error: CLOUDINARY_API_SECRET must be supplied from managed secret store}
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,7 +139,11 @@ services:
     networks:
       - lumigift-network
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      # /api/health       — liveness:  process is up (always 200)
+      # /api/health/ready — readiness: all dependencies healthy (200 / 503)
+      # Docker uses the readiness probe so the container is only marked
+      # healthy once Postgres and Redis are reachable.
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health/ready', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
       interval: 30s
       timeout: 10s
       start_period: 40s
@@ -131,3 +156,4 @@ volumes:
 networks:
   lumigift-network:
     driver: bridge
+

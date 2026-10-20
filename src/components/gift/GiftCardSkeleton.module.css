@@ -30,6 +30,14 @@
   animation: shimmer 1.4s ease-in-out infinite;
 }
 
+/* Respect reduced-motion preference: replace animated shimmer with static bg */
+@media (prefers-reduced-motion: reduce) {
+  .bone {
+    animation: none;
+    background: var(--color-bg-elevated);
+  }
+}
+
 .header {
   display: flex;
   align-items: center;
