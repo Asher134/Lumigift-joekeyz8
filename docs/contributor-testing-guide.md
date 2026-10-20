@@ -97,6 +97,23 @@ Seed the test database first:
 npm run db:seed:test
 ```
 
+The seed script is idempotent — it is safe to run multiple times. It creates:
+
+| Dataset       | Detail                                                                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| 4 users       | Alice, Bob, Carol, David (Nigerian test numbers +2348011111111 range)                                                                      |
+| 9 gifts       | All statuses: `pending_payment`, `locked`, `unlocked`, `claimed` (×2), `cancelled`, `expired`, plus multi-provider Paystack + Stripe gifts |
+| 2 invitations | One `pending`, one `claimed`                                                                                                               |
+
+For **staging** environment seeding (CI or manual QA):
+
+```bash
+STAGING_DATABASE_URL=postgresql://... npm run db:seed:staging
+```
+
+The staging seed uses the `+2340000XXXXX` reserved phone range — these numbers
+are never allocated to real subscribers so no SMS is accidentally sent.
+
 Then run only integration tests:
 
 ```bash

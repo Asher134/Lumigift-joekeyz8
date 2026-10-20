@@ -41,7 +41,6 @@
     "e2e": "playwright test",
     "db:seed:test": "ts-node scripts/seed-test-db.ts",
     "db:seed:staging": "ts-node scripts/seed-staging.ts",
-    "chaos:test": "docker compose -f chaos-tests/docker-compose.chaos.yml up -d && npx ts-node chaos-tests/run-chaos-suite.ts",
     "secrets:validate": "ts-node scripts/validate-production-secrets.ts",
     "test:visual": "playwright test --config=playwright.visual.config.ts",
     "test:visual:update": "playwright test --config=playwright.visual.config.ts --update-snapshots",

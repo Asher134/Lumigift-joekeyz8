@@ -7,31 +7,33 @@ import type { CreateGiftInput } from "@/types/schemas";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Button } from "@/components/ui/Button";
-import {
-  ApiErrorBanner,
-  classifyApiError,
-  type ApiErrorState,
-} from "@/components/ui/ApiErrorBanner";
 import { GiftPreview } from "./GiftPreview";
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { useCsrf } from "@/hooks/useCsrf";
 import { formatNGN } from "@/lib/currency";
+import { isAmbiguousDstTransition } from "@/lib/dateFormat";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { GiftFlowErrorBoundary } from "./GiftFlowErrorBoundary";
 import styles from "./CreateGiftForm.module.css";
 
 type Step = "form" | "preview";
 
 export function CreateGiftForm() {
+  return (
+    <GiftFlowErrorBoundary>
+      <CreateGiftFormContent />
+    </GiftFlowErrorBoundary>
+  );
+}
+
+function CreateGiftFormContent() {
   const [step, setStep] = useState<Step>("form");
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [usdcEquivalent, setUsdcEquivalent] = useState("…");
   const [showUnregisteredWarning, setShowUnregisteredWarning] = useState(false);
   const [recipientRegistered, setRecipientRegistered] = useState<boolean | null>(null);
   const [unlockDstWarning, setUnlockDstWarning] = useState(false);
-
-  // Ref to the submit button that triggers the unregistered-recipient dialog;
-  // focus returns here when the dialog closes.
-  const submitButtonRef = useRef<HTMLButtonElement>(null);
 
   const { csrfFetch } = useCsrf();
   const queryClient = useQueryClient();
@@ -42,7 +44,6 @@ export function CreateGiftForm() {
     getValues,
     formState: { errors },
   } = useForm<CreateGiftInput>({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(createGiftSchema) as any,
     defaultValues: { paymentProvider: "paystack", recipientIsRegistered: true },
     mode: "onBlur",
@@ -136,11 +137,6 @@ export function CreateGiftForm() {
     setError(null);
     const data = getValues();
     createGiftMutation.mutate(data);
-  };
-
-  const handleRetry = () => {
-    setApiError(null);
-    onConfirm();
   };
 
   if (step === "preview") {
@@ -237,7 +233,7 @@ export function CreateGiftForm() {
             </div>
           </div>
         </div>
-      </Dialog>
+      )}
     </>
   );
 }

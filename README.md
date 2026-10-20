@@ -221,6 +221,36 @@ STELLAR_NETWORK=testnet npm run contract:deploy
 
 ---
 
+## Mutation Testing
+
+Lumigift uses [Stryker Mutator](https://stryker-mutator.io) to verify test suite quality.
+A **minimum mutation score of 70%** is required to merge PRs — the CI job will fail and post a score comment if the threshold is not met.
+
+### Running locally
+
+```bash
+# Full mutation test run (slow — ~10 min on first run)
+npx stryker run
+
+# Target high-priority modules only (faster iteration)
+npx stryker run --mutate "src/server/services/gift.service.ts,src/lib/escrow-client.ts"
+```
+
+### Configuration
+
+See `stryker.config.js`. Key settings:
+
+| Option               | Value                               |
+| -------------------- | ----------------------------------- |
+| `thresholds.break`   | `70` — CI fails below this score    |
+| `thresholds.low`     | `70` — score is highlighted in red  |
+| `thresholds.high`    | `80` — score is highlighted in green|
+| High-priority files  | `gift.service.ts`, `escrow-client.ts` |
+
+HTML reports are saved to `reports/mutation/` and uploaded as CI artifacts.
+
+---
+
 ## Contributing
 
 We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
