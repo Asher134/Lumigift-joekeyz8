@@ -4,8 +4,10 @@
 services:
   # ─── PostgreSQL Database ────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.8-alpine3.21
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: lumigift
       POSTGRES_PASSWORD: lumigift_dev_password
@@ -26,8 +28,10 @@ services:
 
   # ─── Redis Cache/Queue ──────────────────────────────────────────────────────
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.2-alpine3.21
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "6379:6379"
     command: >

@@ -1,0 +1,287 @@
+name: Deploy Smart Contract (Testnet)
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "contracts/**"
+      - "scripts/deploy-contract.ts"
+      - "scripts/smoke-test-contract.ts"
+      - ".github/workflows/deploy-contract-testnet.yml"
+  workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: "Force redeployment to testnet"
+        type: boolean
+        default: false
+      run_smoke_tests:
+        description: "Execute contract smoke tests after deployment"
+        type: boolean
+        default: true
+
+concurrency:
+  group: contract-testnet-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  build-contract:
+    name: Build Contract & Compute Checksum
+    runs-on: ubuntu-latest
+    outputs:
+      wasm-sha256: ${{ steps.checksum.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1 (stable)
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: contracts
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify Cargo.lock immutability
+        working-directory: contracts
+        run: cargo check --locked
+
+      - name: Audit dependencies (cargo-audit)
+        working-directory: contracts
+        run: |
+          cargo install --locked cargo-audit
+          cargo audit --locked --deny warnings
+
+      - name: Run contract unit tests
+        working-directory: contracts
+        run: cargo test --locked
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli --features opt
+
+      - name: Build optimized WASM
+        run: npm run contract:build
+
+      - name: Compute WASM Checksum
+        id: checksum
+        run: |
+          WASM_FILE="contracts/target/wasm32-unknown-unknown/release/lumigift_escrow.wasm"
+          SHA=$(sha256sum "$WASM_FILE" | awk '{print $1}')
+          echo "$SHA  lumigift_escrow.wasm" > "$WASM_FILE.sha256"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "WASM SHA-256: $SHA"
+
+      - name: Upload WASM Artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: escrow-wasm-artifact
+          path: |
+            contracts/target/wasm32-unknown-unknown/release/lumigift_escrow.wasm
+            contracts/target/wasm32-unknown-unknown/release/lumigift_escrow.wasm.sha256
+          retention-days: 14
+
+  deploy-testnet:
+    name: Deploy to Testnet
+    runs-on: ubuntu-latest
+    needs: [build-contract]
+    environment: staging
+    outputs:
+      contract-id: ${{ steps.deploy.outputs.contract-id }}
+      wasm-hash: ${{ steps.deploy.outputs.wasm-hash }}
+      explorer-url: ${{ steps.deploy.outputs.explorer-url }}
+      deployed-at: ${{ steps.deploy.outputs.deployed-at }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1 (stable)
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: contracts
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli --features opt
+
+      - name: Download WASM Artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: escrow-wasm-artifact
+          path: contracts/target/wasm32-unknown-unknown/release
+
+      - run: npm ci
+
+      - name: Execute Testnet Deployment
+        id: deploy
+        env:
+          STELLAR_NETWORK: testnet
+          STELLAR_RPC_URL: https://soroban-testnet.stellar.org
+          STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          STELLAR_SERVER_SECRET_KEY: ${{ secrets.STAGING_STELLAR_SERVER_SECRET_KEY || secrets.STELLAR_SERVER_SECRET_KEY }}
+          CI: true
+        run: |
+          npx ts-node scripts/deploy-contract.ts --json > deploy_raw_out.json
+          cat deploy_raw_out.json
+          
+          CONTRACT_ID=$(node -e "console.log(JSON.parse(require('fs').readFileSync('deployment-testnet.json')).contractId)")
+          WASM_HASH=$(node -e "console.log(JSON.parse(require('fs').readFileSync('deployment-testnet.json')).wasmHash)")
+          EXPLORER_URL=$(node -e "console.log(JSON.parse(require('fs').readFileSync('deployment-testnet.json')).explorerUrl)")
+          DEPLOYED_AT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('deployment-testnet.json')).deployedAt)")
+          
+          echo "contract-id=$CONTRACT_ID" >> "$GITHUB_OUTPUT"
+          echo "wasm-hash=$WASM_HASH" >> "$GITHUB_OUTPUT"
+          echo "explorer-url=$EXPLORER_URL" >> "$GITHUB_OUTPUT"
+          echo "deployed-at=$DEPLOYED_AT" >> "$GITHUB_OUTPUT"
+
+      - name: Publish Deployment Summary
+        run: |
+          echo "### 🚀 Testnet Contract Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Property | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Contract ID** | \`${{ steps.deploy.outputs.contract-id }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Network** | \`testnet\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **WASM SHA-256** | \`${{ steps.deploy.outputs.wasm-hash }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Deployed At** | ${{ steps.deploy.outputs.deployed-at }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Explorer** | [View on Stellar Expert](${{ steps.deploy.outputs.explorer-url }}) |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Deployment Artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: deployment-artifacts
+          path: |
+            deployment-testnet.json
+            .contract-ids.json
+            deployments.log
+          retention-days: 30
+
+  smoke-tests:
+    name: Contract Smoke Tests
+    runs-on: ubuntu-latest
+    needs: [deploy-testnet]
+    environment: staging
+    if: inputs.run_smoke_tests != false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1 (stable)
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: contracts
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli --features opt
+
+      - name: Download Deployment Manifest
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: deployment-artifacts
+          path: .
+
+      - run: npm ci
+
+      - name: Run On-Chain Smoke Tests
+        env:
+          STELLAR_NETWORK: testnet
+          STELLAR_RPC_URL: https://soroban-testnet.stellar.org
+          STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          STELLAR_ESCROW_CONTRACT_ID: ${{ needs.deploy-testnet.outputs.contract-id }}
+          STELLAR_SERVER_SECRET_KEY: ${{ secrets.STAGING_STELLAR_SERVER_SECRET_KEY || secrets.STELLAR_SERVER_SECRET_KEY }}
+        run: |
+          npx ts-node scripts/smoke-test-contract.ts --contract-id "${{ needs.deploy-testnet.outputs.contract-id }}" --network testnet
+
+      - name: Publish Smoke Test Summary
+        if: always()
+        run: |
+          if [ -f smoke-test-report.json ]; then
+            STATUS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('smoke-test-report.json')).status)")
+            PASSED=$(node -e "console.log(JSON.parse(require('fs').readFileSync('smoke-test-report.json')).passedChecks)")
+            TOTAL=$(node -e "console.log(JSON.parse(require('fs').readFileSync('smoke-test-report.json')).totalChecks)")
+            echo "### 🧪 Contract Smoke Test Results: **$STATUS**" >> "$GITHUB_STEP_SUMMARY"
+            echo "Checks passed: **$PASSED / $TOTAL**" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ Smoke test report was not generated (execution failed)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload Smoke Test Report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smoke-test-report
+          path: smoke-test-report.json
+          retention-days: 14
+
+  promote-configuration:
+    name: Promote Configuration
+    runs-on: ubuntu-latest
+    needs: [deploy-testnet, smoke-tests]
+    environment: staging
+    if: success()
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1 (stable)
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: contracts
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli --features opt
+
+      - name: Download WASM and Deployment Artifacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: escrow-wasm-artifact
+          path: contracts/target/wasm32-unknown-unknown/release
+
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: deployment-artifacts
+          path: .
+
+      - run: npm ci
+
+      - name: Regenerate TypeScript Bindings
+        env:
+          STELLAR_NETWORK: testnet
+          STELLAR_ESCROW_CONTRACT_ID: ${{ needs.deploy-testnet.outputs.contract-id }}
+        run: |
+          npm run contract:bindings
+
+      - name: Upload Contract Bindings Artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: contract-bindings
+          path: src/lib/contracts/escrow-client.ts
+          retention-days: 30
+
+      - name: Publish Promotion Status
+        run: |
+          echo "### ✅ Promotion Gating Passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Contract \`${{ needs.deploy-testnet.outputs.contract-id }}\` successfully verified on testnet." >> "$GITHUB_STEP_SUMMARY"
+          echo "Deployment artifacts and typed bindings are ready for staging release." >> "$GITHUB_STEP_SUMMARY"

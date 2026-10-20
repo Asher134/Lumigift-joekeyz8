@@ -33,3 +33,17 @@ Out of scope:
 - Social engineering
 - Denial of service via resource exhaustion
 - Issues requiring physical access to a device
+
+## Automated Vulnerability Scanning & Gates
+
+All commits and pull requests targeting protected branches (`main`, `develop`) undergo continuous security scans:
+
+- **npm**: Automated dependency audit & Trivy vulnerability scans
+- **Cargo**: Automated Rust contract security audit (`cargo-audit`)
+- **Docker**: Container vulnerability and CIS benchmark scans (`trivy`, `dockle`)
+- **Terraform**: Infrastructure as Code misconfiguration scans (`trivy config`)
+
+### Security Exceptions Policy
+
+Critical/High vulnerabilities fail protected branches automatically. Temporary exceptions require designated owners and strict expiration dates tracked in [`.security-exceptions.json`](.security-exceptions.json). Expired exceptions immediately block builds. See [docs/ops/vulnerability-scanning.md](docs/ops/vulnerability-scanning.md) for details.
+

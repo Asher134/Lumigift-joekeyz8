@@ -121,6 +121,47 @@ ol {
   outline-offset: 2px;
 }
 
+/* ─── Reduced-motion support (issue #44) ─────────────────────────────────── */
+/*
+ * When a user has requested reduced motion (via OS settings or browser),
+ * we disable or shorten all transitions, animations, and scroll behaviour.
+ * This covers WCAG 2.1 SC 2.3.3 (Animation from Interactions) — AAA — and
+ * the recommended pattern from the CSS Media Queries Level 5 spec.
+ *
+ * Rules:
+ *  1. Instant transitions — duration dropped to 0.01 ms so JS `transitionend`
+ *     listeners still fire without a perceptible delay.
+ *  2. Animations are paused and set to show their first frame only, so no
+ *     information conveyed by animation (e.g. loading spinners) is hidden.
+ *  3. Smooth scroll is disabled; scroll-behaviour falls back to "auto".
+ */
+@media (prefers-reduced-motion: reduce) {
+  /* Kill all CSS transitions */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Stop infinite spinners from spinning — show static frame instead */
+  .spinner,
+  [class*="spinner"] {
+    animation: none !important;
+  }
+
+  /* Ensure loading skeleton shimmer is replaced with a static background */
+  .skeleton,
+  [class*="skeleton"] {
+    animation: none !important;
+    background-image: none !important;
+    background-color: var(--color-bg-elevated) !important;
+  }
+}
+
 /* ─── Mobile baseline ─────────────────────────────────────────────────────── */
 html,
 body {

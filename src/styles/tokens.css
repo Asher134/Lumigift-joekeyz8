@@ -87,6 +87,8 @@
   --transition-fast: 120ms ease;
   --transition-base: 200ms ease;
   --transition-slow: 350ms ease;
+  /* Used as a safe fallback when reduced-motion is preferred */
+  --transition-instant: 0.01ms;
 
   /* Layout */
   --max-width-sm: 640px;

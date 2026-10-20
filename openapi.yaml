@@ -4,9 +4,37 @@ info:
   description: |
     REST API for Lumigift — time-locked cash gifts on the Stellar blockchain.
 
-    **Authentication:** Most endpoints require a valid NextAuth.js session cookie.
-    Obtain a session by completing the phone OTP flow (`POST /api/v1/auth/send-otp`
-    followed by NextAuth credentials sign-in).
+    ## Authentication
+
+    Most endpoints require a valid NextAuth.js session cookie.
+    Complete the phone OTP flow to obtain a session:
+
+    1. `POST /api/v1/auth/send-otp` — request an OTP via SMS
+    2. `POST /api/v1/auth/[...nextauth]` — exchange OTP for a session cookie
+
+    The session cookie (`next-auth.session-token`) is set automatically by the
+    browser after a successful sign-in.
+
+    ## CSRF Protection
+
+    All state-mutating requests (`POST`, `PUT`, `DELETE`) must include a valid
+    CSRF token in the `x-csrf-token` header. Obtain the token from
+    `GET /api/v1/csrf`. The `useCsrf` React hook handles this automatically
+    in the frontend.
+
+    ## Response Envelope
+
+    Every response is wrapped in a standard envelope:
+
+    **Success:** `{ "success": true, "data": { ... } }`
+
+    **Error:** `{ "success": false, "error": "message", "code": "ERROR_CODE", "correlationId": "..." }`
+
+    ## Response Headers
+
+    Every response includes:
+    - `X-API-Version: v1` — API version
+    - `x-correlation-id: <id>` — request trace ID (include in bug reports)
 
     **Base URL:** `https://www.lumigift.com`
   version: 1.0.0
@@ -22,7 +50,7 @@ servers:
 
 tags:
   - name: Auth
-    description: Phone OTP authentication
+    description: Phone OTP authentication and session management
   - name: Gifts
     description: Gift lifecycle — create, read, cancel, claim
   - name: Payments
@@ -31,8 +59,41 @@ tags:
     description: Media upload helpers
   - name: Cron
     description: Internal scheduler endpoints (Bearer token required)
+  - name: Admin
+    description: Admin-only gift management and audit log access
+  - name: Health
+    description: Service health check
 
 paths:
+  /api/v1/csrf:
+    get:
+      tags: [Auth]
+      summary: Get CSRF token
+      description: |
+        Returns a signed CSRF token scoped to the current session. Include
+        the token in the `x-csrf-token` header on all state-mutating requests
+        (`POST`, `PUT`, `DELETE`). Tokens expire after 1 hour.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: CSRF token
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          csrfToken:
+                            type: string
+                            example: "a1b2c3d4..."
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/v1/auth/send-otp:
     post:
       tags: [Auth]
@@ -57,18 +118,30 @@ paths:
       responses:
         "200":
           description: OTP sent (or silently dropped if number is not registered)
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessResponse"
-              example:
-                success: true
-                data:
-                  message: "If this number is registered, an OTP has been sent."
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: "If this number is registered, an OTP has been sent."
         "400":
           $ref: "#/components/responses/BadRequest"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/auth/report-login:
     get:
@@ -90,12 +163,17 @@ paths:
       responses:
         "200":
           description: Report received
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
     post:
       tags: [Auth]
       summary: Report a suspicious login (JSON body)
@@ -114,18 +192,23 @@ paths:
       responses:
         "200":
           description: Report received
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/gifts:
     get:
       tags: [Gifts]
       summary: List gifts sent by the authenticated user
-      description: Returns a cursor-paginated list of gifts (10 per page).
+      description: Returns a stable cursor-paginated list of gifts (10 per page). Cursors are opaque, signed, and bound to the authenticated sender.
       security:
         - sessionCookie: []
       parameters:
@@ -138,6 +221,9 @@ paths:
       responses:
         "200":
           description: Paginated gift list
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
           content:
             application/json:
               schema:
@@ -147,6 +233,7 @@ paths:
                     properties:
                       data:
                         type: object
+                        required: [gifts, nextCursor]
                         properties:
                           gifts:
                             type: array
@@ -155,8 +242,12 @@ paths:
                           nextCursor:
                             type: string
                             nullable: true
+                            description: Pass this value as `cursor` on the next request.
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "400":
+          description: Cursor is malformed, tampered with, or belongs to another sender.
+          $ref: "#/components/responses/BadRequest"
     post:
       tags: [Gifts]
       summary: Create a new gift
@@ -174,6 +265,9 @@ paths:
       responses:
         "201":
           description: Gift created
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
           content:
             application/json:
               schema:
@@ -183,16 +277,24 @@ paths:
                     properties:
                       data:
                         type: object
+                        required: [gift, paymentUrl]
                         properties:
                           gift:
                             $ref: "#/components/schemas/Gift"
                           paymentUrl:
                             type: string
                             format: uri
+                            description: Paystack payment URL to redirect the user to.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/gifts/{id}:
     get:
@@ -204,6 +306,9 @@ paths:
       responses:
         "200":
           description: Gift found
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
           content:
             application/json:
               schema:
@@ -213,8 +318,12 @@ paths:
                     properties:
                       data:
                         $ref: "#/components/schemas/PublicGift"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
     delete:
       tags: [Gifts]
       summary: Cancel a gift
@@ -229,6 +338,9 @@ paths:
       responses:
         "200":
           description: Gift cancelled
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
           content:
             application/json:
               schema:
@@ -246,6 +358,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/gifts/{id}/claim:
     post:
@@ -274,6 +388,9 @@ paths:
       responses:
         "200":
           description: Gift claimed — USDC transferred
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
           content:
             application/json:
               schema:
@@ -283,14 +400,20 @@ paths:
                     properties:
                       data:
                         type: object
+                        required: [txHash]
                         properties:
                           txHash:
                             type: string
-                            description: Stellar transaction hash
+                            description: Stellar transaction hash of the USDC transfer
+                            example: "a5b6c7d8e9..."
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/payments:
     post:
@@ -299,40 +422,71 @@ paths:
       description: |
         Receives `charge.success` events from Paystack.
         Signature verified via HMAC-SHA512 (`x-paystack-signature` header).
-        Idempotent — duplicate references are silently acknowledged.
+        Idempotent — duplicate or concurrent event IDs have no side effects
+        (protected by atomic Redis SET NX on the payment reference).
       parameters:
         - name: x-paystack-signature
           in: header
           required: true
           schema:
             type: string
+            description: HMAC-SHA512 of the raw request body using the Paystack secret key.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [event, data]
               properties:
                 event:
                   type: string
                   example: charge.success
                 data:
                   type: object
+                  required: [reference, status]
                   properties:
                     reference:
                       type: string
+                      description: Unique Paystack payment reference
                     status:
                       type: string
+                      example: success
                     metadata:
                       type: object
                       properties:
                         giftId:
                           type: string
+                          format: uuid
       responses:
         "200":
-          description: Event acknowledged
+          description: Event acknowledged (processed or already-seen duplicate)
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [received]
+                properties:
+                  received:
+                    type: boolean
+                    example: true
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
-          description: Invalid signature
+          description: Invalid HMAC signature
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/payments/callback:
     get:
@@ -345,14 +499,18 @@ paths:
           required: true
           schema:
             type: string
+            description: Paystack payment reference
         - name: giftId
           in: query
           required: true
           schema:
             type: string
+            format: uuid
       responses:
         "302":
-          description: Redirect to success or failure page
+          description: Redirect to success (`/gift/{id}/success`) or failure page
+        "400":
+          description: Missing required query parameters — redirects to `/error?code=bad_callback`
 
   /api/v1/payments/stripe/webhook:
     post:
@@ -361,23 +519,50 @@ paths:
       description: |
         Receives `payment_intent.succeeded` events from Stripe.
         Signature verified via `stripe-signature` header.
+        Idempotent — duplicate event IDs have no side effects
+        (protected by atomic Redis SET NX on `event.id`).
       parameters:
         - name: stripe-signature
           in: header
           required: true
           schema:
             type: string
+            description: Stripe webhook signature for payload verification.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              description: Raw Stripe Event object
       responses:
         "200":
-          description: Event acknowledged
+          description: Event acknowledged (processed or already-seen duplicate)
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [received]
+                        properties:
+                          received:
+                            type: boolean
+                            example: true
         "400":
-          description: Invalid signature or payload
+          description: Invalid Stripe signature or malformed payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/uploads:
     post:
@@ -386,6 +571,8 @@ paths:
       description: |
         Uploads an image to Cloudinary. Accepts JPEG, PNG, WebP, or GIF up to 5 MB.
         Returns the CDN URL and public ID.
+      security:
+        - sessionCookie: []
       requestBody:
         required: true
         content:
@@ -400,6 +587,9 @@ paths:
       responses:
         "200":
           description: Upload successful
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
           content:
             application/json:
               schema:
@@ -409,6 +599,7 @@ paths:
                     properties:
                       data:
                         type: object
+                        required: [url, publicId]
                         properties:
                           url:
                             type: string
@@ -417,21 +608,35 @@ paths:
                             type: string
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "502":
           description: Cloudinary upload failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/uploads/sign:
     post:
       tags: [Uploads]
-      summary: Get a signed Cloudinary upload params
+      summary: Get signed Cloudinary upload params
       description: Returns a signed timestamp and params for a direct client-side Cloudinary upload.
+      security:
+        - sessionCookie: []
       responses:
         "200":
           description: Signed upload parameters
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
           content:
             application/json:
               schema:
                 type: object
+                required: [signature, timestamp, folder, apiKey, cloudName]
                 properties:
                   signature:
                     type: string
@@ -443,20 +648,128 @@ paths:
                     type: string
                   cloudName:
                     type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/cron/unlock:
     get:
       tags: [Cron]
       summary: Process gift unlocks
       description: |
-        Finds all `locked` gifts past their unlock time and transfers USDC to recipients.
-        Called by Vercel Cron or an external scheduler every minute.
+        Finds all `locked` gifts past their unlock time and transitions them to
+        `unlocked`. Uses `SELECT … FOR UPDATE SKIP LOCKED` so concurrent
+        scheduler runs are safe and each gift is processed exactly once.
         Requires `Authorization: Bearer <CRON_SECRET>`.
       security:
         - cronBearer: []
       responses:
         "200":
           description: Unlock run complete
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [processed, durationMs]
+                        properties:
+                          processed:
+                            type: integer
+                            description: Number of gifts unlocked in this run
+                          durationMs:
+                            type: integer
+                            description: Wall-clock time of the run in milliseconds
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/cron/expire:
+    get:
+      tags: [Cron]
+      summary: Expire stale pending-payment gifts
+      description: Marks gifts stuck in `pending_payment` as `expired` after a timeout.
+      security:
+        - cronBearer: []
+      responses:
+        "200":
+          description: Expiry run complete
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [expired]
+                        properties:
+                          expired:
+                            type: integer
+                            description: Number of gifts expired in this run
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Service health check
+      description: Returns the health status of the API service and its dependencies.
+      responses:
+        "200":
+          description: Service is healthy
+          headers:
+            X-API-Version:
+              $ref: "#/components/headers/X-API-Version"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+        "503":
+          description: Service is degraded or unhealthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [degraded, error]
+                  details:
+                    type: object
+
+  /api/v1/cron/reconcile:
+    get:
+      tags: [Cron]
+      summary: Reconcile payment and blockchain state
+      description: |
+        Checks gifts whose payment succeeded but contract deployment is pending.
+        Retries failed deployments and flags irreconcilable gifts for manual review.
+        Requires `Authorization: Bearer <CRON_SECRET>`.
+      security:
+        - cronBearer: []
+      responses:
+        "200":
+          description: Reconciliation run complete
           content:
             application/json:
               schema:
@@ -474,16 +787,18 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
-  /api/v1/cron/expire:
+  /api/v1/cron/index-events:
     get:
       tags: [Cron]
-      summary: Expire stale pending-payment gifts
-      description: Marks gifts stuck in `pending_payment` as `expired` after a timeout.
+      summary: Index Soroban contract events
+      description: |
+        Fetches recent events from the Soroban escrow contract and persists them
+        to the database for query performance. Requires `Authorization: Bearer <CRON_SECRET>`.
       security:
         - cronBearer: []
       responses:
         "200":
-          description: Expiry run complete
+          description: Indexing run complete
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -493,11 +808,31 @@ components:
       type: apiKey
       in: cookie
       name: next-auth.session-token
-      description: NextAuth.js session cookie obtained after OTP login.
+      description: |
+        NextAuth.js session cookie obtained after completing the phone OTP flow.
+        Valid for 30 days. Renews automatically on activity.
+    csrfToken:
+      type: apiKey
+      in: header
+      name: x-csrf-token
+      description: |
+        Signed CSRF token required on all state-mutating requests (POST, PUT, DELETE).
+        Obtain from `GET /api/v1/csrf`. Expires after 1 hour.
     cronBearer:
       type: http
       scheme: bearer
-      description: Static secret set in `CRON_SECRET` environment variable.
+      description: |
+        Static secret set in the `CRON_SECRET` environment variable.
+        Include as `Authorization: Bearer <CRON_SECRET>` on cron endpoint requests.
+
+  headers:
+    X-API-Version:
+      description: |
+        Current API version number. Clients should assert this matches the version
+        they were built against. A change in major version indicates breaking changes.
+      schema:
+        type: integer
+        example: 1
 
   parameters:
     GiftId:
@@ -518,36 +853,85 @@ components:
           type: boolean
           example: true
         data:
-          description: Response payload (shape varies by endpoint)
+          description: Response payload (shape varies by endpoint — see individual endpoints)
 
     ErrorResponse:
       type: object
-      required: [success, error]
+      required: [success, error, code]
       properties:
         success:
           type: boolean
           example: false
         error:
           type: string
-          example: "Unauthorized"
+          description: Human-readable message. Do not parse — use `code` instead.
+          example: "Gift is not yet unlocked"
+        code:
+          type: string
+          description: Stable machine-readable error code. See docs/api-auth-and-errors.md.
+          enum:
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - SESSION_EXPIRED
+            - VALIDATION_ERROR
+            - INVALID_PAYLOAD
+            - GIFT_NOT_FOUND
+            - GIFT_ALREADY_CLAIMED
+            - GIFT_NOT_UNLOCKED
+            - GIFT_INVALID_STATE
+            - GIFT_DAILY_LIMIT
+            - PAYMENT_FAILED
+            - PAYMENT_INVALID_SIGNATURE
+            - IDEMPOTENCY_CONFLICT
+            - RATE_SLIPPAGE
+            - RATE_EXPIRED
+            - RATE_LIMIT_EXCEEDED
+            - INTERNAL_ERROR
+          example: "GIFT_NOT_UNLOCKED"
+        correlationId:
+          type: string
+          description: Request trace ID. Include in bug reports.
+          example: "req_01HXY4Z8ABCD"
 
     Gift:
       type: object
+      required:
+        - id
+        - senderId
+        - recipientPhoneHash
+        - recipientName
+        - amountNgn
+        - amountUsdc
+        - unlockAt
+        - status
+        - createdAt
+        - updatedAt
       properties:
         id:
           type: string
           format: uuid
         senderId:
           type: string
+        recipientPhoneHash:
+          type: string
+          description: SHA-256 hex digest of the recipient phone — never the plaintext number
         recipientName:
           type: string
-        recipientPhone:
+        recipientEmail:
           type: string
+          format: email
+          nullable: true
         amountNgn:
           type: number
+          minimum: 100
+        amountUsdc:
+          type: string
+          description: On-chain USDC amount as a string to preserve Stellar precision (7 decimals)
+          example: "4.2857143"
         message:
           type: string
           nullable: true
+          maxLength: 500
         mediaUrl:
           type: string
           format: uri
@@ -556,15 +940,76 @@ components:
           type: string
           format: date-time
         status:
+          $ref: "#/components/schemas/GiftStatus"
+        contractId:
           type: string
-          enum: [pending_payment, locked, claimed, cancelled, expired]
+          nullable: true
+          description: Soroban escrow contract instance ID (C...)
+        stellarTxHash:
+          type: string
+          nullable: true
+          description: Stellar transaction hash from the escrow funding call
+        claimTxHash:
+          type: string
+          description: |
+            Current lifecycle state. Valid transitions:
+            draft → pending_payment → funded → locked → unlocked → claimed
+            Any non-terminal state can transition to cancelled.
+            expired is set by the cron job on unlocked gifts older than 365 days.
+          enum:
+            - draft
+            - pending_payment
+            - funded
+            - locked
+            - unlocked
+            - claimed
+            - cancelled
+            - expired
+        contractId:
+          type: string
+          nullable: true
+          description: Soroban escrow contract address (set when status becomes locked)
+        stellarTxHash:
+          type: string
+          nullable: true
+          description: Stellar transaction hash for the escrow funding
+        claimTxHash:
+          type: string
+          nullable: true
+          description: Stellar transaction hash for the claim payout
         createdAt:
           type: string
           format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    GiftStatus:
+      type: string
+      description: Lifecycle status of a gift
+      enum:
+        - draft
+        - pending_payment
+        - funded
+        - locked
+        - unlocked
+        - claimed
+        - cancelled
+        - expired
+      example: locked
 
     PublicGift:
       type: object
-      description: Safe subset of Gift — no sender PII
+      description: |
+        Safe public view of a gift — excludes sender PII and internal fields.
+        Returned by the unauthenticated GET /api/v1/gifts/{id} endpoint.
+      required:
+        - id
+        - recipientName
+        - amountNgn
+        - amountUsdc
+        - unlockAt
+        - status
       properties:
         id:
           type: string
@@ -573,6 +1018,8 @@ components:
           type: string
         amountNgn:
           type: number
+        amountUsdc:
+          type: string
         message:
           type: string
           nullable: true
@@ -585,7 +1032,15 @@ components:
           format: date-time
         status:
           type: string
-          enum: [pending_payment, locked, claimed, cancelled, expired]
+          enum:
+            - draft
+            - pending_payment
+            - funded
+            - locked
+            - unlocked
+            - claimed
+            - cancelled
+            - expired
 
     CreateGiftRequest:
       type: object
@@ -593,10 +1048,18 @@ components:
       properties:
         recipientName:
           type: string
+          minLength: 1
+          maxLength: 100
           example: "Amaka Obi"
         recipientPhone:
           type: string
+          description: E.164 or local Nigerian format — normalised server-side
           example: "+2348012345678"
+        recipientEmail:
+          type: string
+          format: email
+          nullable: true
+          description: Optional — used to send the recipient an email notification
         amountNgn:
           type: number
           minimum: 100
@@ -612,42 +1075,121 @@ components:
         unlockAt:
           type: string
           format: date-time
-          description: ISO 8601 datetime when the gift unlocks
+          description: ISO 8601 datetime when the gift unlocks (must be in the future)
+        paymentProvider:
+          type: string
+          enum: [paystack, stripe]
+          default: paystack
 
   responses:
     BadRequest:
       description: Invalid request body or parameters
+      headers:
+        X-API-Version:
+          $ref: "#/components/headers/X-API-Version"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            error: "Missing required field: phone"
+            code: BAD_REQUEST
+
     Unauthorized:
       description: Missing or invalid authentication
+      headers:
+        X-API-Version:
+          $ref: "#/components/headers/X-API-Version"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            error: "Unauthorized"
+            code: UNAUTHORIZED
+
     Forbidden:
       description: Authenticated but not authorised for this resource
+      headers:
+        X-API-Version:
+          $ref: "#/components/headers/X-API-Version"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            error: "Forbidden"
+            code: FORBIDDEN
+
     NotFound:
       description: Resource not found
+      headers:
+        X-API-Version:
+          $ref: "#/components/headers/X-API-Version"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            error: "Gift not found"
+            code: NOT_FOUND
+
     Conflict:
-      description: Action not allowed in the current state
+      description: Action not allowed in the current resource state
+      headers:
+        X-API-Version:
+          $ref: "#/components/headers/X-API-Version"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            error: "Invalid gift status transition: \"claimed\" → \"locked\""
+            code: INVALID_TRANSITION
+
+    UnprocessableEntity:
+      description: Request body is syntactically valid but semantically invalid
+      headers:
+        X-API-Version:
+          $ref: "#/components/headers/X-API-Version"
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/ErrorResponse"
+              - type: object
+                properties:
+                  details:
+                    type: array
+                    description: Per-field validation errors
+                    items:
+                      type: object
+                      required: [field, message]
+                      properties:
+                        field:
+                          type: string
+                          example: amountNgn
+                        message:
+                          type: string
+                          example: "Must be at least 100"
+          example:
+            success: false
+            error: "Validation failed"
+            code: VALIDATION_ERROR
+            details:
+              - field: amountNgn
+                message: "Must be at least 100"
+
     TooManyRequests:
       description: Rate limit exceeded
       headers:
+        X-API-Version:
+          $ref: "#/components/headers/X-API-Version"
         Retry-After:
           schema:
             type: integer
@@ -656,3 +1198,21 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            error: "Too many requests — try again later"
+            code: RATE_LIMITED
+
+    InternalServerError:
+      description: Unexpected server error
+      headers:
+        X-API-Version:
+          $ref: "#/components/headers/X-API-Version"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            success: false
+            error: "Internal server error"
+            code: INTERNAL_ERROR
