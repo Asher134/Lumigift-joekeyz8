@@ -1,10 +1,35 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { GiftCard } from "@/components/gift/GiftCard";
 import type { Gift } from "@/types";
 
 interface Props {
-  params: { id: string };
-  searchParams: { stellarKey?: string };
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ stellarKey?: string }>;
+}
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { id } = await params;
+  const title = "A Time-Locked Gift Awaits";
+  const description = "A private gift is waiting to be opened with Lumigift.";
+  const image = `/gifts/${encodeURIComponent(id)}/opengraph-image`;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: "website",
+      images: [{ url: image, width: 1200, height: 630, alt: "A private Lumigift gift teaser" }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [image],
+    },
+  };
 }
 
 async function fetchGift(id: string): Promise<Gift | null> {
@@ -18,7 +43,8 @@ async function fetchGift(id: string): Promise<Gift | null> {
 }
 
 export default async function GiftClaimPage({ params, searchParams }: Props) {
-  const gift = await fetchGift(params.id);
+  const [{ id }, { stellarKey }] = await Promise.all([params, searchParams]);
+  const gift = await fetchGift(id);
   if (!gift) notFound();
 
   return (
@@ -30,7 +56,7 @@ export default async function GiftClaimPage({ params, searchParams }: Props) {
         padding: "0 clamp(1rem, 4vw, 1.5rem)",
       }}
     >
-      <GiftCard gift={gift} perspective="recipient" recipientStellarKey={searchParams.stellarKey} />
+      <GiftCard gift={gift} perspective="recipient" recipientStellarKey={stellarKey} />
     </main>
   );
 }
