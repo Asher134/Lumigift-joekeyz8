@@ -19,11 +19,35 @@ import { formatNGN } from "@/lib/currency";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import styles from "./CreateGiftForm.module.css";
 
+// ── Gift amount limits (mirrors env defaults & Zod schema — issue #270) ───────
+const GIFT_MIN_AMOUNT_NGN = 500;
+const GIFT_MAX_AMOUNT_NGN = 5_000_000;
+const GIFT_DAILY_LIMIT_NGN = 1_000_000;
+
 type Step = "form" | "preview";
+
+/**
+ * Returns true when the supplied datetime-local string falls within a
+ * known DST transition gap (heuristic: offset changes within ±2 hours).
+ */
+function isAmbiguousDstTransition(isoString: string): boolean {
+  try {
+    const date = new Date(isoString);
+    const before = new Date(date.getTime() - 60 * 60 * 1000);
+    const after = new Date(date.getTime() + 60 * 60 * 1000);
+    const offsetBefore = before.getTimezoneOffset();
+    const offsetAfter = after.getTimezoneOffset();
+    return offsetBefore !== offsetAfter;
+  } catch {
+    return false;
+  }
+}
 
 export function CreateGiftForm() {
   const [step, setStep] = useState<Step>("form");
   const [error, setError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<ApiErrorState | null>(null);
+  const [loading, setLoading] = useState(false);
   const [usdcEquivalent, setUsdcEquivalent] = useState("…");
   const [showUnregisteredWarning, setShowUnregisteredWarning] = useState(false);
   const [recipientRegistered, setRecipientRegistered] = useState<boolean | null>(null);
@@ -73,6 +97,7 @@ export function CreateGiftForm() {
     },
     onError: (err: Error) => {
       setError(err.message);
+      setApiError(classifyApiError(err.message));
     },
   });
 
@@ -80,6 +105,7 @@ export function CreateGiftForm() {
   const onFormSubmit = async (data: CreateGiftInput) => {
     setLoading(true);
     setError(null);
+    setApiError(null);
     // Warn if the chosen local time falls in a DST gap
     setUnlockDstWarning(isAmbiguousDstTransition(data.unlockAt));
     try {
@@ -130,10 +156,13 @@ export function CreateGiftForm() {
 
   const onCancelUnregistered = () => {
     setShowUnregisteredWarning(false);
+    // Return focus to the submit button for keyboard users
+    submitButtonRef.current?.focus();
   };
 
   const onConfirm = () => {
     setError(null);
+    setApiError(null);
     const data = getValues();
     createGiftMutation.mutate(data);
   };
@@ -180,21 +209,23 @@ export function CreateGiftForm() {
           {...register("recipientPhone")}
         />
 
+        {/* Amount field — limits enforced in Zod schema and mirrored here (#270) */}
         <Input
           label="Gift Amount (₦)"
           type="number"
           placeholder="5000"
-          min={500}
-          max={500000}
+          min={GIFT_MIN_AMOUNT_NGN}
+          max={GIFT_MAX_AMOUNT_NGN}
           error={errors.amountNgn?.message}
           {...register("amountNgn", { valueAsNumber: true })}
         />
         <p className="input-hint">
-          Min {formatNGN(500)} · Max {formatNGN(500000)} · Daily limit {formatNGN(1000000)}
+          Min {formatNGN(GIFT_MIN_AMOUNT_NGN)} · Max {formatNGN(GIFT_MAX_AMOUNT_NGN)} · Daily limit{" "}
+          {formatNGN(GIFT_DAILY_LIMIT_NGN)}
         </p>
 
         <Input
-          label="Unlock Date & Time"
+          label="Unlock Date &amp; Time"
           type="datetime-local"
           error={errors.unlockAt?.message}
           {...register("unlockAt")}
@@ -215,7 +246,9 @@ export function CreateGiftForm() {
           {...register("message")}
         />
 
-        <Button type="submit" fullWidth loading={loading}>
+        {apiError && <ApiErrorBanner error={apiError} onRetry={handleRetry} />}
+
+        <Button ref={submitButtonRef} type="submit" fullWidth loading={loading}>
           Preview Gift →
         </Button>
       </form>
@@ -237,7 +270,7 @@ export function CreateGiftForm() {
             </div>
           </div>
         </div>
-      </Dialog>
+      )}
     </>
   );
 }

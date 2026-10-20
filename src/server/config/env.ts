@@ -51,7 +51,8 @@ const envSchema = z.object({
 
   // Gift Limits
   GIFT_MIN_AMOUNT_NGN: z.coerce.number().int().positive().default(500),
-  GIFT_MAX_AMOUNT_NGN: z.coerce.number().int().positive().default(500000),
+  // Maximum single-gift amount raised to ₦5,000,000 (issue #270)
+  GIFT_MAX_AMOUNT_NGN: z.coerce.number().int().positive().default(5000000),
   GIFT_DAILY_LIMIT_NGN: z.coerce.number().int().positive().default(1000000),
 
   // Cloudinary

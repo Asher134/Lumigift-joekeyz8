@@ -70,7 +70,9 @@ export const POST = withErrorHandler(
     if (!parsed.success) {
       return NextResponse.json<ApiResponse<never>>(
         { success: false, error: parsed.error.issues[0].message },
-        { status: 400 }
+        // 422 Unprocessable Entity — the request is well-formed but the
+        // contained values (e.g. amount out of range) are semantically invalid.
+        { status: 422 }
       );
     }
 
