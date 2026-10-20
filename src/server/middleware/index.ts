@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { getServerSession } from "next-auth";
 import * as Sentry from "@sentry/nextjs";
 import { authOptions } from "@/lib/auth";
@@ -32,41 +33,64 @@ export function withAuth(handler: Handler): Handler {
 const API_VERSION = "v1";
 
 /**
+ * Attaches correlation/request-ID response headers to an outgoing response.
+ *
+ * Headers set on **every** response (success and error):
+ *  - `X-Request-Id`      — UUID v4 generated for this request (matches the
+ *                          `requestId` field in error bodies).
+ *  - `x-correlation-id`  — Same ID echoed back so callers that send the header
+ *                          receive it back unchanged.
+ *  - `X-API-Version`     — Stable API version string.
+ */
+function attachRequestHeaders(res: NextResponse, requestId: string): void {
+  res.headers.set("X-Request-Id", requestId);
+  res.headers.set("x-correlation-id", requestId);
+  res.headers.set("X-API-Version", API_VERSION);
+}
+
+/**
  * Wraps a route handler with error handling that:
- *  1. Extracts / generates a correlation ID from the `x-correlation-id` header.
- *  2. Maps thrown errors to stable public codes via {@link mapError}.
- *  3. Logs the full internal error (including stack trace) to Pino + Sentry,
- *     tagged with the correlation ID so every log line is traceable.
- *  4. Returns a sanitised response body — no stack traces or provider secrets
+ *  1. Generates a UUID v4 `requestId` for every request (honours an inbound
+ *     `x-correlation-id` header so distributed traces are preserved).
+ *  2. Attaches `X-Request-Id`, `x-correlation-id`, and `X-API-Version` to
+ *     **every** response — success and error alike.
+ *  3. Maps thrown errors to stable public codes via {@link mapError}.
+ *  4. Logs the full internal error (including stack trace) to Pino + Sentry,
+ *     tagged with the `requestId` so every log line is traceable.
+ *  5. Returns a sanitised response body — no stack traces or provider secrets
  *     ever reach the client.
- *  5. Attaches `x-correlation-id` and `X-API-Version` to every response.
+ *  6. Includes `requestId` in error response bodies so clients can report
+ *     issues by quoting a single identifier.
  */
 export function withErrorHandler(handler: Handler): Handler {
   return async (req, context) => {
-    const correlationId = getCorrelationId(req.headers);
-    const log = requestLogger(correlationId);
+    // Honour an inbound correlation ID from upstream services; otherwise mint a
+    // fresh UUID v4 so every request has a unique, traceable identifier.
+    const requestId = getCorrelationId(req.headers) || randomUUID();
+    const log = requestLogger(requestId);
+
     try {
       const res = await handler(req, context);
-      res.headers.set("X-API-Version", API_VERSION);
-      res.headers.set("x-correlation-id", correlationId);
+      attachRequestHeaders(res, requestId);
       return res;
     } catch (err) {
       const mapped = mapError(err);
 
       // Log full internal error server-side — stack + cause never leave the server
       if (mapped.code === "INTERNAL_ERROR") {
-        log.error({ err, correlationId, path: req.nextUrl.pathname }, "[API] Unhandled error");
-        // Report unexpected errors to Sentry with correlation ID for tracing
+        log.error({ err, requestId, path: req.nextUrl.pathname }, "[API] Unhandled error");
+        // Report unexpected errors to Sentry with requestId for tracing
         Sentry.withScope((scope) => {
-          scope.setTag("correlationId", correlationId);
+          scope.setTag("requestId", requestId);
+          scope.setTag("correlationId", requestId);
           scope.setTag("path", req.nextUrl.pathname);
           scope.setExtra("url", req.url);
           Sentry.captureException(err);
         });
       } else {
-        // Known/expected error — log at warn level with correlation ID
+        // Known/expected error — log at warn level with requestId
         log.warn(
-          { code: mapped.code, status: mapped.status, correlationId, err },
+          { code: mapped.code, status: mapped.status, requestId, err },
           "[API] Application error"
         );
       }
@@ -76,13 +100,12 @@ export function withErrorHandler(handler: Handler): Handler {
           success: false,
           error: mapped.publicMessage,
           code: mapped.code,
-          // correlationId in the body makes it easy for clients to report issues
-          ...(correlationId ? { correlationId } : {}),
-        } as ApiError & { correlationId?: string },
+          // requestId in the body lets clients report issues by quoting one ID
+          requestId,
+        } as ApiError & { requestId: string },
         { status: mapped.status }
       );
-      res.headers.set("X-API-Version", API_VERSION);
-      res.headers.set("x-correlation-id", correlationId);
+      attachRequestHeaders(res, requestId);
       return res;
     }
   };
