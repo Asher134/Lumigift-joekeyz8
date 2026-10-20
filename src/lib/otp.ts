@@ -1,3 +1,4 @@
+import { randomInt } from "crypto";
 import { withRedis } from "@/lib/redis";
 
 const OTP_TTL = 600; // 10 minutes
@@ -18,8 +19,9 @@ export async function storeOtp(phone: string, otp: string): Promise<void> {
   });
 }
 
+/** Generates a 6-digit OTP from a CSPRNG (Math.random is predictable — pentest finding PT-08). */
 export function generateOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return randomInt(100000, 1000000).toString();
 }
 
 export type VerifyResult = { success: true } | { success: false; locked: boolean; message: string };

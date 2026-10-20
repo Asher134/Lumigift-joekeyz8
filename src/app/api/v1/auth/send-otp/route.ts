@@ -23,17 +23,11 @@ async function checkRateLimit(
 
 export const POST = withErrorHandler(
   withCsrf(async (req: NextRequest) => {
-    const body = await req.json();
-    const phone = normalizePhone(String(body?.phone ?? ""));
+    const validation = await validateBody(req, sendOtpSchema);
+    if (!validation.success) return validation.response;
+    const { phone } = validation.data;
 
-    if (!phone) {
-      return NextResponse.json<ApiResponse<never>>(
-        { success: false, error: "Invalid phone number" },
-        { status: 400 }
-      );
-    }
-
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
+      const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
 
     try {
       // Per-phone: 3 requests per 10 minutes
@@ -69,10 +63,11 @@ export const POST = withErrorHandler(
       throw err;
     }
 
-    // Always return the same body regardless of whether the number is registered.
-    return NextResponse.json<ApiResponse<{ message: string }>>({
-      success: true,
-      data: OTP_RESPONSE,
-    });
-  })
+      // Always return the same body regardless of whether the number is registered.
+      return NextResponse.json<ApiResponse<{ message: string }>>({
+        success: true,
+        data: OTP_RESPONSE,
+      });
+    })
+  )
 );

@@ -1,75 +1,227 @@
 import { z } from "zod";
 
-const envSchema = z.object({
-  // App
-  NEXT_PUBLIC_APP_URL: z.string().url(),
-  NEXT_PUBLIC_APP_NAME: z.string().default("Lumigift"),
+export const KNOWN_PLACEHOLDER_PATTERNS = [
+  /replace_with/i,
+  /lumigift_dev_password/i,
+  /your[_-]/i,
+  /changeme/i,
+  /change[_-]me/i,
+  /dummy/i,
+  /placeholder/i,
+  /example/i,
+  /secret[_-]?key[_-]?here/i,
+  /<[^>]+>/, // e.g. <NEW_SECRET_KEY>, <INSERT_KEY>
+  /TODO/i,
+  /password123/i,
+  /^1234567890/i,
+];
 
-  // Auth
-  NEXTAUTH_URL: z.string().url(),
-  NEXTAUTH_SECRET: z.string().min(32),
-  NEXTAUTH_SECRET_PREVIOUS: z.string().optional(),
-  NEXTAUTH_ROTATION_GRACE_HOURS: z.coerce.number().int().positive().default(24),
-  CSRF_SECRET: z.string().min(32),
+export function isPlaceholderValue(value: string | undefined): boolean {
+  if (!value || typeof value !== "string") return false;
+  const trimmed = value.trim();
+  return KNOWN_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(trimmed));
+}
 
-  // Database
-  DATABASE_URL: z.string().min(1),
-  DB_POOL_MIN: z.coerce.number().int().positive().default(2),
-  DB_POOL_MAX: z.coerce.number().int().positive().default(10),
-  DB_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
-  DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+const secretField = (minLength = 32, fieldName = "Secret") =>
+  z
+    .string()
+    .min(minLength, `${fieldName} must be at least ${minLength} characters long`)
+    .refine(
+      (val) => {
+        // Enforce no placeholder values in production
+        if (process.env.NODE_ENV === "production" || process.env.STRICT_SECRET_VALIDATION === "true") {
+          return !isPlaceholderValue(val);
+        }
+        return true;
+      },
+      {
+        message: `${fieldName} contains an insecure placeholder or default value not permitted in production`,
+      }
+    );
 
-  // Stellar
-  STELLAR_NETWORK: z.enum(["testnet", "mainnet"]).default("testnet"),
-  STELLAR_HORIZON_URL: z.string().url(),
-  STELLAR_NETWORK_PASSPHRASE: z.string().min(1),
-  STELLAR_ESCROW_CONTRACT_ID: z.string().min(1),
-  STELLAR_SERVER_SECRET_KEY: z.string().regex(/^S[A-Z0-9]{55}$/),
-  STELLAR_RPC_URL: z.string().url(),
-  STELLAR_SERVER_PUBLIC_KEY: z.string().regex(/^G[A-Z0-9]{55}$/),
+const envSchema = z
+  .object({
+    // App
+    NEXT_PUBLIC_APP_URL: z.string().url(),
+    NEXT_PUBLIC_APP_NAME: z.string().default("Lumigift"),
 
-  // USDC
-  USDC_ISSUER: z.string().regex(/^G[A-Z0-9]{55}$/),
-  USDC_ASSET_CODE: z.string().default("USDC"),
+    // Auth
+    NEXTAUTH_URL: z.string().url(),
+    NEXTAUTH_SECRET: secretField(32, "NEXTAUTH_SECRET"),
+    NEXTAUTH_SECRET_PREVIOUS: z
+      .string()
+      .min(32)
+      .optional()
+      .refine(
+        (val) => {
+          if (val && (process.env.NODE_ENV === "production" || process.env.STRICT_SECRET_VALIDATION === "true")) {
+            return !isPlaceholderValue(val);
+          }
+          return true;
+        },
+        { message: "NEXTAUTH_SECRET_PREVIOUS contains an insecure placeholder" }
+      ),
+    NEXTAUTH_ROTATION_GRACE_HOURS: z.coerce.number().int().positive().default(24),
+    CSRF_SECRET: secretField(32, "CSRF_SECRET"),
 
-  // Payments
-  PAYSTACK_SECRET_KEY: z.string().min(1),
-  NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: z.string().min(1),
-  STRIPE_SECRET_KEY: z.string().min(1),
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().min(1),
-  STRIPE_WEBHOOK_SECRET: z.string().min(1),
+    // Database
+    DATABASE_URL: z
+      .string()
+      .min(1)
+      .refine(
+        (val) => {
+          if (process.env.NODE_ENV === "production" || process.env.STRICT_SECRET_VALIDATION === "true") {
+            if (isPlaceholderValue(val)) return false;
+            if (val.includes("lumigift_dev_password")) return false;
+          }
+          return true;
+        },
+        { message: "DATABASE_URL contains default/placeholder credentials not permitted in production" }
+      ),
+    DB_POOL_MIN: z.coerce.number().int().positive().default(2),
+    DB_POOL_MAX: z.coerce.number().int().positive().default(10),
+    DB_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
+    DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 
-  // SMS
-  TERMII_API_KEY: z.string().min(1),
-  TERMII_SENDER_ID: z.string().max(11).default("Lumigift"),
+    // Stellar
+    STELLAR_NETWORK: z.enum(["testnet", "mainnet"]).default("testnet"),
+    STELLAR_HORIZON_URL: z.string().url(),
+    STELLAR_NETWORK_PASSPHRASE: z.string().min(1),
+    STELLAR_ESCROW_CONTRACT_ID: z.string().min(1),
+    STELLAR_SERVER_SECRET_KEY: z
+      .string()
+      .regex(/^S[A-Z0-9]{55}$/, "STELLAR_SERVER_SECRET_KEY must be a valid Stellar secret key (S + 55 chars)")
+      .refine(
+        (val) => {
+          if (process.env.NODE_ENV === "production" || process.env.STRICT_SECRET_VALIDATION === "true") {
+            return !isPlaceholderValue(val);
+          }
+          return true;
+        },
+        { message: "STELLAR_SERVER_SECRET_KEY contains placeholder characters" }
+      ),
+    STELLAR_RPC_URL: z.string().url(),
+    STELLAR_SERVER_PUBLIC_KEY: z.string().regex(/^G[A-Z0-9]{55}$/, "STELLAR_SERVER_PUBLIC_KEY must be a valid Stellar public key (G + 55 chars)"),
 
-  // Cron
-  CRON_SECRET: z.string().min(32),
+    // USDC
+    USDC_ISSUER: z.string().regex(/^G[A-Z0-9]{55}$/),
+    USDC_ASSET_CODE: z.string().default("USDC"),
 
-  // Redis
-  REDIS_URL: z.string().min(1),
+    // Payments
+    PAYSTACK_SECRET_KEY: z
+      .string()
+      .min(1)
+      .refine(
+        (val) => {
+          if (process.env.NODE_ENV === "production" || process.env.STRICT_SECRET_VALIDATION === "true") {
+            if (isPlaceholderValue(val)) return false;
+            // On mainnet in production, reject test keys
+            if (process.env.STELLAR_NETWORK === "mainnet" && val.startsWith("sk_test_")) {
+              return false;
+            }
+          }
+          return true;
+        },
+        { message: "PAYSTACK_SECRET_KEY is invalid or uses a test/placeholder key in production" }
+      ),
+    NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: z.string().min(1),
+    STRIPE_SECRET_KEY: z
+      .string()
+      .min(1)
+      .refine(
+        (val) => {
+          if (process.env.NODE_ENV === "production" || process.env.STRICT_SECRET_VALIDATION === "true") {
+            if (isPlaceholderValue(val)) return false;
+            // On mainnet in production, reject test keys
+            if (process.env.STELLAR_NETWORK === "mainnet" && val.startsWith("sk_test_")) {
+              return false;
+            }
+          }
+          return true;
+        },
+        { message: "STRIPE_SECRET_KEY is invalid or uses a test/placeholder key in production" }
+      ),
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().min(1),
+    STRIPE_WEBHOOK_SECRET: z
+      .string()
+      .min(1)
+      .refine(
+        (val) => {
+          if (process.env.NODE_ENV === "production" || process.env.STRICT_SECRET_VALIDATION === "true") {
+            return !isPlaceholderValue(val);
+          }
+          return true;
+        },
+        { message: "STRIPE_WEBHOOK_SECRET contains an insecure placeholder" }
+      ),
 
-  // Gift Limits
-  GIFT_MIN_AMOUNT_NGN: z.coerce.number().int().positive().default(500),
-  GIFT_MAX_AMOUNT_NGN: z.coerce.number().int().positive().default(500000),
-  GIFT_DAILY_LIMIT_NGN: z.coerce.number().int().positive().default(1000000),
+    // SMS
+    TERMII_API_KEY: z
+      .string()
+      .min(1)
+      .refine(
+        (val) => {
+          if (process.env.NODE_ENV === "production" || process.env.STRICT_SECRET_VALIDATION === "true") {
+            return !isPlaceholderValue(val);
+          }
+          return true;
+        },
+        { message: "TERMII_API_KEY contains an insecure placeholder" }
+      ),
+    TERMII_SENDER_ID: z.string().max(11).default("Lumigift"),
 
-  // Cloudinary
-  CLOUDINARY_CLOUD_NAME: z.string().min(1),
-  CLOUDINARY_API_KEY: z.string().min(1),
-  CLOUDINARY_API_SECRET: z.string().min(1),
-});
+    // Cron
+    CRON_SECRET: secretField(32, "CRON_SECRET"),
+
+    // Redis
+    REDIS_URL: z
+      .string()
+      .min(1)
+      .refine(
+        (val) => {
+          if (process.env.NODE_ENV === "production" || process.env.STRICT_SECRET_VALIDATION === "true") {
+            return !isPlaceholderValue(val);
+          }
+          return true;
+        },
+        { message: "REDIS_URL contains an insecure placeholder" }
+      ),
+
+    // Gift Limits
+    GIFT_MIN_AMOUNT_NGN: z.coerce.number().int().positive().default(500),
+    GIFT_MAX_AMOUNT_NGN: z.coerce.number().int().positive().default(500000),
+    GIFT_DAILY_LIMIT_NGN: z.coerce.number().int().positive().default(1000000),
+
+    // Cloudinary
+    CLOUDINARY_CLOUD_NAME: z.string().min(1),
+    CLOUDINARY_API_KEY: z.string().min(1),
+    CLOUDINARY_API_SECRET: z
+      .string()
+      .min(1)
+      .refine(
+        (val) => {
+          if (process.env.NODE_ENV === "production" || process.env.STRICT_SECRET_VALIDATION === "true") {
+            return !isPlaceholderValue(val);
+          }
+          return true;
+        },
+        { message: "CLOUDINARY_API_SECRET contains an insecure placeholder" }
+      ),
+  });
 
 export type Env = z.infer<typeof envSchema>;
 
+export { envSchema };
+
 let validatedEnv: Env | null = null;
 
-export function validateEnv(): Env {
-  if (validatedEnv) {
+export function validateEnv(customEnv?: Record<string, string | undefined>): Env {
+  if (validatedEnv && !customEnv) {
     return validatedEnv;
   }
 
-  const result = envSchema.safeParse(process.env);
+  const envSource = customEnv ?? process.env;
+  const result = envSchema.safeParse(envSource);
 
   if (!result.success) {
     const missingVars: string[] = [];
@@ -95,7 +247,11 @@ export function validateEnv(): Env {
     }
 
     errorMessage +=
-      "\n\nPlease check your .env file and ensure all required variables are set correctly.";
+      "\n\nPlease ensure all required secrets are securely provisioned from your managed secret store and contain no placeholders.";
+
+    if (customEnv) {
+      throw new Error(errorMessage);
+    }
 
     console.error(errorMessage);
 
@@ -122,8 +278,11 @@ export function validateEnv(): Env {
     process.exit(1);
   }
 
-  validatedEnv = result.data;
-  return validatedEnv;
+  if (!customEnv) {
+    validatedEnv = result.data;
+  }
+  return result.data;
 }
 
 export const env = validateEnv();
+

@@ -115,6 +115,21 @@ export async function withRedis<T>(
 }
 
 /**
+ * Gracefully disconnects the Redis client singleton.
+ * Should be called during application shutdown to avoid connection leaks.
+ * Safe to call even if the client was never connected.
+ *
+ * @returns Resolves when the client has been disconnected.
+ */
+export async function closeRedisClient(): Promise<void> {
+  if (client) {
+    await client.quit();
+    client = null;
+    console.log("[redis] Client disconnected.");
+  }
+}
+
+/**
  * Named export of the raw redis client getter for services that import `redis` directly.
  * @deprecated Use `getRedisClient()` instead.
  */

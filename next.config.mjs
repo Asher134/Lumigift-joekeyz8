@@ -6,6 +6,13 @@ const nextConfig = {
   output: "standalone",
   // Moved out of experimental in Next.js 15+
   serverExternalPackages: ["@stellar/stellar-sdk"],
+  experimental: {
+    // Cap Server Action body payloads to 1 MB (default is 1 MB; set
+    // explicitly so the limit is visible and documented).
+    serverActions: {
+      bodySizeLimit: "1mb",
+    },
+  },
   images: {
     remotePatterns: [
       {
@@ -30,7 +37,11 @@ const nextConfig = {
           { key: "X-Content-Type-Options",     value: "nosniff" },
           { key: "Referrer-Policy",            value: "strict-origin-when-cross-origin" },
           { key: "Permissions-Policy",         value: "camera=(), microphone=(), geolocation=()" },
-          { key: "Strict-Transport-Security",  value: "max-age=31536000; includeSubDomains" },
+          // HSTS with preload: max-age=63072000 (2 years) is required by hstspreload.org.
+          // Before submitting to the preload list, verify this header is returned in staging
+          // by checking https://hstspreload.org and https://securityheaders.com for an A+ rating.
+          // Submission: https://hstspreload.org/?domain=<your-domain>
+          { key: "Strict-Transport-Security",  value: "max-age=63072000; includeSubDomains; preload" },
         ],
       },
     ];

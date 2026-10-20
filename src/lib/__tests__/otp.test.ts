@@ -232,3 +232,14 @@ describe("verifyOtp — rate limiting", () => {
     expect(result.success).toBe(false);
   });
 });
+
+// ─── PT-08: OTPs come from a CSPRNG ───────────────────────────────────────────
+describe("generateOtp", () => {
+  it("does not use Math.random and always yields 6 digits", () => {
+    const { generateOtp } = jest.requireActual<typeof import("@/lib/otp")>("@/lib/otp");
+    const spy = jest.spyOn(Math, "random");
+    for (let i = 0; i < 200; i++) expect(generateOtp()).toMatch(/^\d{6}$/);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+});

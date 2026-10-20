@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SecurityExceptionsRegistry",
+  "type": "object",
+  "required": ["version", "exceptions"],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "exceptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "target", "owner", "reason", "expires_at", "status"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Vulnerability or Advisory ID (CVE-*, RUSTSEC-*, GHSA-*, AVD-*, etc.)"
+          },
+          "target": {
+            "type": "string",
+            "enum": ["npm", "cargo", "docker", "terraform"],
+            "description": "Scanning target ecosystem"
+          },
+          "package": {
+            "type": "string",
+            "description": "Name of package or module affected"
+          },
+          "resource": {
+            "type": "string",
+            "description": "Terraform resource or Docker layer affected"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+          },
+          "owner": {
+            "type": "string",
+            "description": "Email or GitHub handle of the exception owner (e.g. security@lumigift.com or @devops)"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "description": "Justification for exception and mitigation details"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Expiry timestamp (must be in future for active exceptions)"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["active", "resolved", "expired"]
+          }
+        }
+      }
+    }
+  }
+}
