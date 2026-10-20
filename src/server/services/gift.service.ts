@@ -11,6 +11,7 @@ import { sendGiftInvitation } from "@/lib/sms";
 import { stripHtmlTags } from "@/lib/sanitize";
 import { createAuditLog } from "./audit.service";
 import { sendGiftReceivedEmail } from "@/lib/email";
+import { redis, giftStatusChannel } from "@/lib/redis";
 
 // ─── Exchange rate helper ─────────────────────────────────────────────────────
 import { getExchangeRate, lockExchangeRate } from "@/server/services/exchange-rate.service";
@@ -179,6 +180,25 @@ export async function updateGiftStatus(id: string, status: GiftStatus): Promise<
   gift.status = status;
   gift.updatedAt = new Date();
   gifts.set(id, gift);
+
+  // Publish the status change to Redis so SSE subscribers are notified in real
+  // time (issue #272).  Publish is fire-and-forget — a failure must not break
+  // the status update itself.
+  redis
+    .publish(
+      giftStatusChannel(id),
+      JSON.stringify({
+        giftId: id,
+        previousStatus,
+        status,
+        updatedAt: gift.updatedAt.toISOString(),
+      })
+    )
+    .catch((err: unknown) => {
+      // Log but do not propagate — Redis publish is non-critical for the core
+      // gift-status update path.
+      console.error("[gift.service] Redis publish failed for gift status change:", err);
+    });
 
   // Create audit log for status change
   const eventType =
