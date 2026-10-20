@@ -26,6 +26,38 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
 
+  secret-scan-trufflehog:
+    name: Secret Scan (truffleHog — second layer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0  # full history needed for diff-based scanning
+
+      # truffleHog scans git history for high-entropy / verified secrets
+      # and acts as a complementary layer to gitleaks.
+      - name: Run truffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+
+      # Alert the security team via Slack when truffleHog detects a secret.
+      # Requires SLACK_SECURITY_WEBHOOK secret to be set in repository settings.
+      - name: Alert security team on detected secret
+        if: failure()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": ":rotating_light: *Secret detected in PR!*\nRepo: ${{ github.repository }}\nBranch: ${{ github.head_ref || github.ref_name }}\nCommit: ${{ github.sha }}\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n\nPlease rotate any exposed credentials immediately."
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_SECURITY_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
   lint-and-type-check:
     name: Lint & Type Check
     runs-on: ubuntu-latest

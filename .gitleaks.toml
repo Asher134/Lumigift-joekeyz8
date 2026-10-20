@@ -1,5 +1,15 @@
 # Gitleaks configuration
 # Docs: https://github.com/gitleaks/gitleaks#configuration
+#
+# ─── False-Positive Policy ────────────────────────────────────────────────────
+# Any pattern exempted below must be a demonstrably non-secret value (placeholder,
+# public key, test fixture, or example credential).  Real secrets must NEVER be
+# committed.  When adding a new allowlist entry, include:
+#   1. A clear description of WHY this is safe to allow.
+#   2. A path or regex scoped as narrowly as possible.
+#
+# Review this file as part of every security-related PR.
+# ─────────────────────────────────────────────────────────────────────────────
 
 title = "Lumigift secret scanning rules"
 
@@ -12,7 +22,7 @@ useDefault = true
 # that match secret patterns but contain no real credentials.
 
 [[rules.allowlist]]
-description = "CI placeholder values in ci.yml"
+description = "CI placeholder values in ci.yml — these are literal strings used as build-time stubs, not real secrets"
 paths = [".github/workflows/ci.yml"]
 regexes = [
   "ci-secret-placeholder",
@@ -23,20 +33,25 @@ regexes = [
 ]
 
 [[rules.allowlist]]
-description = "Example env file — no real secrets"
-paths = [".env.example"]
+description = "Example env file — every value is a documentation placeholder; no real credentials"
+paths = [".env.example", ".env.local.example"]
 regexTarget = "line"
 regexes = [".*"]
 
 [[rules.allowlist]]
-description = "Stellar testnet public issuer address (not a secret)"
+description = "Stellar testnet public issuer address — this is a well-known public address for the testnet USDC issuer, not a secret key"
 regexes = ["GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"]
 
 [[rules.allowlist]]
-description = "Stellar testnet horizon URL (not a secret)"
+description = "Stellar testnet horizon URL — a public endpoint URL, not a secret"
 regexes = ["https://horizon-testnet\\.stellar\\.org"]
 
 [[rules.allowlist]]
-description = "Placeholder Termii and Paystack keys in tests/docs"
+description = "Placeholder Termii and Paystack keys in test fixtures and documentation only"
 paths = ["src/**/__tests__/**", "docs/**"]
 regexes = ["placeholder", "sk_test_"]
+
+[[rules.allowlist]]
+description = "Docker Compose dev passwords — local development only, never used in production; documented in README"
+paths = ["docker-compose.yml", "docker-compose.dev.yml"]
+regexes = ["lumigift_dev_password"]
