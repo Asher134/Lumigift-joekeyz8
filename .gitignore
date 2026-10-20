@@ -31,9 +31,14 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+.kiro/
 
 # Testing
 coverage/
+test-results/
+playwright-report/
+__snapshots__/
+*.snap
 
 # Rust / Cargo (contracts)
 contracts/target/
