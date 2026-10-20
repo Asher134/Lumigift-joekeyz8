@@ -34,6 +34,8 @@ export interface AdminGiftQuery {
   status?: GiftStatus;
   cursor?: string;
   limit?: number;
+  /** When true, includes soft-deleted gifts; when false (default) excludes them. */
+  includeDeleted?: boolean;
 }
 
 export interface AdminGiftPage {
@@ -46,6 +48,11 @@ export function adminListGifts(query: AdminGiftQuery): AdminGiftPage {
   const limit = Math.min(query.limit ?? 20, 100);
 
   let all = [...gifts.values()].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+  // By default exclude soft-deleted gifts; admin can opt in with includeDeleted
+  if (!query.includeDeleted) {
+    all = all.filter((g) => !g.deletedAt);
+  }
 
   if (query.status) {
     all = all.filter((g) => g.status === query.status);
@@ -65,5 +72,6 @@ export function adminListGifts(query: AdminGiftQuery): AdminGiftPage {
 }
 
 export function adminGetGift(id: string): Gift | null {
+  // Admin can view any gift, including soft-deleted ones
   return gifts.get(id) ?? null;
 }

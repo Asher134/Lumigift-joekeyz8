@@ -35,6 +35,11 @@ export function hashPhone(phone: string): string {
 // ─── In-memory store (replace with DB in production) ─────────────────────────
 export const gifts = new Map<string, Gift>();
 
+/** Returns only non-deleted (active) gifts from the store. */
+function activeGifts(): Gift[] {
+  return [...gifts.values()].filter((g) => !g.deletedAt);
+}
+
 /**
  * Creates a new gift record and initializes a Paystack payment session.
  *
@@ -59,7 +64,7 @@ export async function createGift(
   const { dailyLimitNgn } = serverConfig.giftLimits;
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
-  const todayTotal = [...gifts.values()]
+  const todayTotal = activeGifts()
     .filter((g) => g.senderId === senderId && g.createdAt >= todayStart)
     .reduce((sum, g) => sum + g.amountNgn, 0);
   if (todayTotal + input.amountNgn > dailyLimitNgn) {
@@ -155,12 +160,16 @@ export async function createGift(
 
 /**
  * Retrieves a gift by its unique ID.
+ * Returns `null` for soft-deleted gifts — use {@link getDeletedGiftById} in
+ * admin contexts where deleted records need to be inspected.
  *
  * @param id - The gift UUID.
- * @returns The {@link Gift} if found, or `null` if it does not exist.
+ * @returns The {@link Gift} if found and not soft-deleted, or `null`.
  */
 export async function getGiftById(id: string): Promise<Gift | null> {
-  return gifts.get(id) ?? null;
+  const gift = gifts.get(id);
+  if (!gift || gift.deletedAt) return null;
+  return gift;
 }
 
 /**
@@ -208,13 +217,13 @@ export async function updateGiftStatus(id: string, status: GiftStatus): Promise<
 }
 
 /**
- * Returns all gifts created by a given sender.
+ * Returns all non-deleted gifts created by a given sender.
  *
  * @param senderId - The authenticated user's ID.
  * @returns An array of {@link Gift} objects, possibly empty.
  */
 export async function getGiftsBySender(senderId: string): Promise<Gift[]> {
-  return [...gifts.values()].filter((g) => g.senderId === senderId);
+  return activeGifts().filter((g) => g.senderId === senderId);
 }
 
 /** Paginated result for {@link getGiftsBySenderPaginated}. */
@@ -248,7 +257,7 @@ export async function getGiftsBySenderPaginated(
   cursor: string | null,
   limit: number
 ): Promise<GiftPage> {
-  const all = [...gifts.values()]
+  const all = activeGifts()
     .filter((g) => g.senderId === senderId)
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
@@ -275,7 +284,7 @@ export async function getGiftsBySenderPage(
 ): Promise<GiftPageOffset> {
   const safePage = Math.max(1, page);
   const safeLimit = Math.min(100, Math.max(1, limit));
-  const all = [...gifts.values()]
+  const all = activeGifts()
     .filter((g) => g.senderId === senderId)
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
@@ -288,14 +297,14 @@ export async function getGiftsBySenderPage(
 }
 
 /**
- * Returns all gifts where the recipient's phone number matches `phone`.
+ * Returns all non-deleted gifts where the recipient's phone number matches `phone`.
  *
  * @param phone - E.164-formatted recipient phone number.
  * @returns An array of {@link Gift} objects, possibly empty.
  */
 export async function getGiftsByRecipient(phone: string): Promise<Gift[]> {
   const hash = hashPhone(phone);
-  return [...gifts.values()].filter((g) => g.recipientPhoneHash === hash);
+  return activeGifts().filter((g) => g.recipientPhoneHash === hash);
 }
 
 /**
@@ -312,6 +321,74 @@ export async function cancelGift(id: string): Promise<Gift | null> {
   gift.updatedAt = new Date();
   gifts.set(id, gift);
   return gift;
+}
+
+/**
+ * Soft-deletes a gift by setting its `deletedAt` timestamp.
+ * The row is preserved for audit and potential refund processing.
+ * An audit log entry is created on every soft-delete.
+ *
+ * Callers should NOT use {@link cancelGift} followed by this — soft-delete
+ * is a separate lifecycle event from cancellation.
+ *
+ * @param id - The gift UUID.
+ * @param deletedBy - The user ID performing the deletion (for audit trail).
+ * @returns The updated {@link Gift}, or `null` if the gift does not exist or is
+ *   already soft-deleted.
+ */
+export async function softDeleteGift(id: string, deletedBy: string): Promise<Gift | null> {
+  const gift = gifts.get(id);
+  if (!gift || gift.deletedAt) return null;
+
+  gift.deletedAt = new Date();
+  gift.updatedAt = new Date();
+  gifts.set(id, gift);
+
+  // Audit log — required for financial compliance
+  await createAuditLog({
+    eventType: "gift_cancelled",
+    userId: deletedBy,
+    giftId: id,
+    amountNgn: gift.amountNgn,
+    amountUsdc: gift.amountUsdc,
+    metadata: {
+      action: "soft_delete",
+      previousStatus: gift.status,
+      deletedAt: gift.deletedAt.toISOString(),
+    },
+  });
+
+  return gift;
+}
+
+/**
+ * Retrieves a gift by ID regardless of its soft-delete status.
+ * Intended for admin use only — regular callers should use {@link getGiftById}.
+ *
+ * @param id - The gift UUID.
+ * @returns The {@link Gift} (including soft-deleted), or `null` if not found.
+ */
+export async function getDeletedGiftById(id: string): Promise<Gift | null> {
+  return gifts.get(id) ?? null;
+}
+
+/**
+ * Hard-deletes gifts that were soft-deleted before `retentionCutoff`.
+ * Intended to be called by a scheduled cron job after the data-retention
+ * window (e.g. 7 years) has expired.
+ *
+ * @param retentionCutoff - Gifts soft-deleted before this date will be removed.
+ * @returns The number of records hard-deleted.
+ */
+export async function hardDeleteExpiredGifts(retentionCutoff: Date): Promise<number> {
+  let count = 0;
+  for (const [id, gift] of gifts.entries()) {
+    if (gift.deletedAt && gift.deletedAt < retentionCutoff) {
+      gifts.delete(id);
+      count++;
+    }
+  }
+  return count;
 }
 
 /**
@@ -332,14 +409,14 @@ export async function storeClaimTxHash(id: string, txHash: string): Promise<Gift
 }
 
 /**
- * Retrieves a gift by its on-chain Soroban contract ID.
+ * Retrieves a non-deleted gift by its on-chain Soroban contract ID.
  *
  * @param contractId - The deployed escrow contract address (C…).
- * @returns The matching {@link Gift}, or `null` if not found.
+ * @returns The matching {@link Gift}, or `null` if not found or soft-deleted.
  */
 export async function getGiftByContractId(contractId: string): Promise<Gift | null> {
   for (const gift of gifts.values()) {
-    if (gift.contractId === contractId) return gift;
+    if (gift.contractId === contractId && !gift.deletedAt) return gift;
   }
   return null;
 }
@@ -371,6 +448,9 @@ export async function updateGiftStatusIdempotent(
   }
 }
 
+/**
+ * Returns all non-deleted gifts matching a given status.
+ */
 export async function getGiftsByStatus(status: GiftStatus): Promise<Gift[]> {
-  return [...gifts.values()].filter((g) => g.status === status);
+  return activeGifts().filter((g) => g.status === status);
 }

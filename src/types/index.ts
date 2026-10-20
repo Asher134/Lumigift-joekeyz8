@@ -39,6 +39,8 @@ export interface Gift {
   claimTxHash?: string; // claim transaction hash
   createdAt: Date;
   updatedAt: Date;
+  /** Soft-delete timestamp. NULL = active. Set by softDeleteGift(). */
+  deletedAt?: Date;
 }
 
 // ─── Payment ──────────────────────────────────────────────────────────────────
