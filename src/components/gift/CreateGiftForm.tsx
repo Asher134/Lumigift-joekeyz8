@@ -1,13 +1,15 @@
 "use client";
 
 import { useForm } from "react-hook-form";
+import { clsx } from "clsx";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { createGiftSchema } from "@/types/schemas";
+import { createGiftSchema, GIFT_MESSAGE_MAX_LENGTH } from "@/types/schemas";
 import type { CreateGiftInput } from "@/types/schemas";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Button } from "@/components/ui/Button";
 import { GiftPreview } from "./GiftPreview";
+import { GiftPreviewCard } from "./GiftPreviewCard";
 import { useState } from "react";
 import { useCsrf } from "@/hooks/useCsrf";
 import { formatNGN } from "@/lib/currency";
@@ -42,6 +44,7 @@ function CreateGiftFormContent() {
     register,
     handleSubmit,
     getValues,
+    watch,
     formState: { errors },
   } = useForm<CreateGiftInput>({
     resolver: zodResolver(createGiftSchema) as any,
@@ -139,6 +142,9 @@ function CreateGiftFormContent() {
     createGiftMutation.mutate(data);
   };
 
+  const messageLength = (watch("message") ?? "").length;
+  const messageRemaining = GIFT_MESSAGE_MAX_LENGTH - messageLength;
+
   if (step === "preview") {
     return (
       <GiftPreview
@@ -207,9 +213,22 @@ function CreateGiftFormContent() {
           id="message"
           rows={3}
           placeholder="Write something heartfelt…"
+          maxLength={GIFT_MESSAGE_MAX_LENGTH}
           error={errors.message?.message}
+          aria-describedby={clsx("message-counter", errors.message && "message-error")}
           {...register("message")}
         />
+        <p
+          id="message-counter"
+          className={clsx(styles.counter, messageRemaining < 20 && styles.counterWarning)}
+          aria-live="polite"
+        >
+          {messageLength}/{GIFT_MESSAGE_MAX_LENGTH}
+        </p>
+
+        <section aria-label="Gift card preview">
+          <GiftPreviewCard data={watch()} onEdit={() => {}} />
+        </section>
 
         <Button type="submit" fullWidth loading={loading}>
           Preview Gift →

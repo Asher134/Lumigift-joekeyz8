@@ -1,0 +1,170 @@
+/* SupportWidget.module.css — Issue #347 */
+
+.root {
+  position: fixed;
+  right: var(--space-4, 1rem);
+  bottom: calc(var(--space-4, 1rem) + env(safe-area-inset-bottom, 0px));
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-3, 0.75rem);
+}
+
+.toggle {
+  position: relative;
+  width: 3.25rem;
+  height: 3.25rem;
+  border: none;
+  border-radius: 50%;
+  background-color: var(--color-brand-primary, #6c3bff);
+  color: #fff;
+  font-size: 1.4rem;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--color-text-primary, #f0f0f5);
+  outline-offset: 3px;
+}
+
+.badge,
+.dot {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background-color: var(--color-error, #ef4444);
+}
+
+.badge {
+  position: absolute;
+  top: 0.2rem;
+  right: 0.2rem;
+  border: 2px solid var(--color-bg-primary, #0d0d14);
+}
+
+.dot {
+  margin-left: var(--space-2, 0.5rem);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 0.75rem);
+  width: min(22rem, calc(100vw - 2rem));
+  max-height: min(32rem, calc(100vh - 6rem));
+  overflow-y: auto;
+  padding: var(--space-4, 1rem);
+  border-radius: var(--radius-lg, 0.75rem);
+  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.1));
+  background-color: var(--color-bg-elevated, #16161f);
+  color: var(--color-text-primary, #f0f0f5);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.title {
+  font-size: var(--text-lg, 1.125rem);
+  font-weight: var(--font-bold, 700);
+}
+
+.link {
+  background: none;
+  border: none;
+  color: var(--color-brand-primary, #6c3bff);
+  cursor: pointer;
+}
+
+.primary {
+  padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
+  border: none;
+  border-radius: var(--radius-md, 0.5rem);
+  background-color: var(--color-brand-primary, #6c3bff);
+  color: #fff;
+  cursor: pointer;
+}
+
+.primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 0.5rem);
+}
+
+.list,
+.thread {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 0.5rem);
+}
+
+.caseItem {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
+  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--radius-md, 0.5rem);
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.caseSubject {
+  font-weight: var(--font-semibold, 600);
+}
+
+.caseMeta,
+.muted {
+  font-size: var(--text-sm, 0.875rem);
+  color: var(--color-text-muted, #6b6b80);
+}
+
+.userMsg,
+.agentMsg {
+  padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
+  border-radius: var(--radius-md, 0.5rem);
+  max-width: 85%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.userMsg {
+  align-self: flex-end;
+  background-color: rgba(108, 59, 255, 0.2);
+}
+
+.agentMsg {
+  align-self: flex-start;
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.error {
+  font-size: var(--text-sm, 0.875rem);
+  color: var(--color-error, #ef4444);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

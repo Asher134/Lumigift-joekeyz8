@@ -11,6 +11,8 @@ const e164Phone = z.string().transform((val, ctx) => {
   return normalized;
 });
 
+export const GIFT_MESSAGE_MAX_LENGTH = 500;
+
 export const createGiftSchema = z.strictObject({
   recipientPhone: e164Phone,
   recipientName: z.string().min(2, "Name must be at least 2 characters"),
@@ -24,7 +26,10 @@ export const createGiftSchema = z.strictObject({
       parseInt(process.env.GIFT_MAX_AMOUNT_NGN ?? "500000", 10),
       `Maximum gift amount is ${formatNGN(parseInt(process.env.GIFT_MAX_AMOUNT_NGN ?? "500000", 10))}`
     ),
-  message: z.string().max(500, "Message cannot exceed 500 characters").optional(),
+  message: z
+    .string()
+    .max(GIFT_MESSAGE_MAX_LENGTH, `Message cannot exceed ${GIFT_MESSAGE_MAX_LENGTH} characters`)
+    .optional(),
   unlockAt: z
     .string()
     .datetime()
