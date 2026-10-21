@@ -55,3 +55,32 @@ variable "ops_alert_email" {
   type        = string
   default     = "ops@lumigift.app"
 }
+
+# ─── #335: Vercel variables ──────────────────────────────────────────────────
+
+variable "vercel_team_id" {
+  description = "Vercel team ID or slug that owns the project"
+  type        = string
+}
+
+variable "vercel_project_name" {
+  description = "Vercel project name"
+  type        = string
+  default     = "lumigift"
+}
+
+variable "vercel_git_repo" {
+  description = "GitHub repository linked to the Vercel project (owner/name)"
+  type        = string
+}
+
+variable "vercel_env_secret_id" {
+  description = "AWS Secrets Manager secret ID holding Vercel env var values as a JSON object"
+  type        = string
+}
+
+variable "vercel_env_keys" {
+  description = "Environment variable keys managed on the Vercel project; values come from vercel_env_secret_id"
+  type        = list(string)
+  default     = []
+}
