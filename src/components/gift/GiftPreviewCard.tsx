@@ -1,6 +1,7 @@
 import type { CreateGiftInput } from "@/types/schemas";
 import type { GiftTemplate } from "@/lib/giftTemplates";
 import { formatUnlockDate } from "@/lib/dateFormat";
+import { giftThemeStyle } from "@/lib/giftThemes";
 import styles from "./GiftPreviewCard.module.css";
 
 interface GiftPreviewCardProps {
@@ -11,9 +12,10 @@ interface GiftPreviewCardProps {
 
 export function GiftPreviewCard({ data, template, onEdit }: GiftPreviewCardProps) {
   const unlockDate = data.unlockAt ? new Date(data.unlockAt) : null;
+  const themeStyle = giftThemeStyle(data.themeId);
 
   return (
-    <article className={styles.card}>
+    <article className={themeStyle ? `${styles.card} gift-theme` : styles.card} style={themeStyle}>
       <div className={styles.header}>
         <span className={styles.emoji}>{template?.emoji ?? "🎁"}</span>
         <div>

@@ -89,6 +89,7 @@ export async function createGift(
     amountNgn: input.amountNgn,
     amountUsdc,
     message: sanitizedMessage,
+    themeId: input.themeId,
     unlockAt: new Date(input.unlockAt),
     provider: "paystack",
     paymentReference,
@@ -446,4 +447,3 @@ export function isGiftUnlocked(
   const nowMs = typeof now === "number" ? now : now.getTime();
   return nowMs >= unlockMs;
 }
-

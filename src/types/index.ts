@@ -32,6 +32,8 @@ export interface Gift {
   amountUsdc: string; // on-chain amount as string to preserve precision
   message?: string;
   mediaUrl?: string;
+  /** Background theme id selected in the gift wizard (see lib/giftThemes). */
+  themeId?: string;
   unlockAt: Date;
   status: GiftStatus;
   contractId?: string; // Soroban escrow contract instance

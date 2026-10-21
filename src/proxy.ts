@@ -10,6 +10,8 @@ function buildCsp(nonce: string): string {
     "style-src": `'self' 'nonce-${nonce}'`,
     "img-src": "'self' data: https://res.cloudinary.com",
     "font-src": "'self'",
+    "worker-src": "'self'",
+    "manifest-src": "'self'",
     "connect-src": "'self' https://horizon-testnet.stellar.org https://horizon.stellar.org",
     "frame-ancestors": "'none'",
     "base-uri": "'self'",

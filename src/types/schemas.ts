@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { GIFT_THEME_IDS } from "@/lib/giftThemes";
 import { normalizePhone } from "@/lib/phone";
 import { formatNGN } from "@/lib/currency";
 
@@ -32,6 +33,7 @@ export const createGiftSchema = z.strictObject({
   paymentProvider: z.enum(["paystack", "stripe"]),
   recipientIsRegistered: z.boolean().default(false),
   recipientEmail: z.string().email("Enter a valid email address").optional(),
+  themeId: z.enum(GIFT_THEME_IDS).optional(),
 });
 
 export const verifyOtpSchema = z.strictObject({
