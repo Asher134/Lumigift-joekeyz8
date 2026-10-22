@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { GiftCard } from "@/components/gift/GiftCard";
+import { OfflineBanner } from "@/components/ui/OfflineBanner";
 import type { Gift } from "@/types";
 
 interface Props {
@@ -56,6 +57,7 @@ export default async function GiftClaimPage({ params, searchParams }: Props) {
         padding: "0 clamp(1rem, 4vw, 1.5rem)",
       }}
     >
+      <OfflineBanner />
       <GiftCard gift={gift} perspective="recipient" recipientStellarKey={stellarKey} />
     </main>
   );
