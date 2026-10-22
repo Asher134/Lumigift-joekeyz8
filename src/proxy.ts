@@ -3,6 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 // Matches /api/* but NOT /api/v1/* and NOT /api/auth/[...nextauth]
 const UNVERSIONED_API = /^\/api\/(?!v\d+\/)(.+)$/;
 
+/** Reporting API group name used in the `Report-To` response header. */
+const CSP_REPORT_GROUP = "csp-endpoint";
+
+/** Path for the CSP violation report endpoint (Issue #301). */
+const CSP_REPORT_URI = "/api/v1/csp-report";
+
 function buildCsp(nonce: string): string {
   const directives: Record<string, string> = {
     "default-src": "'self'",
@@ -10,12 +16,19 @@ function buildCsp(nonce: string): string {
     "style-src": `'self' 'nonce-${nonce}'`,
     "img-src": "'self' data: https://res.cloudinary.com",
     "font-src": "'self'",
+    "worker-src": "'self'",
+    "manifest-src": "'self'",
     "connect-src": "'self' https://horizon-testnet.stellar.org https://horizon.stellar.org",
     "frame-ancestors": "'none'",
     "base-uri": "'self'",
     "form-action": "'self'",
     "object-src": "'none'",
     "upgrade-insecure-requests": "",
+    // Violation reporting — Issue #301
+    // report-uri: legacy support (all browsers)
+    "report-uri": CSP_REPORT_URI,
+    // report-to: Reporting API (Chrome 70+, Edge)
+    "report-to": CSP_REPORT_GROUP,
   };
 
   return Object.entries(directives)
@@ -48,6 +61,16 @@ export function proxy(req: NextRequest) {
 
   const res = NextResponse.next({ request: { headers: requestHeaders } });
   res.headers.set("Content-Security-Policy", csp);
+  // Reporting API header — tells browsers where to POST CSP violation reports
+  // using the modern report-to mechanism (Issue #301).
+  res.headers.set(
+    "Report-To",
+    JSON.stringify({
+      group: CSP_REPORT_GROUP,
+      max_age: 86400,
+      endpoints: [{ url: CSP_REPORT_URI }],
+    })
+  );
   res.headers.set("x-nonce", nonce);
   res.headers.set("x-correlation-id", correlationId);
   return res;

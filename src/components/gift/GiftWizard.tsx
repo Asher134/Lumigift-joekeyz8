@@ -14,6 +14,7 @@ import { useGiftDraft } from "@/hooks/useGiftDraft";
 import { TemplateSelector } from "./TemplateSelector";
 import { WizardProgress } from "./WizardProgress";
 import { GiftPreviewCard } from "./GiftPreviewCard";
+import { ThemePicker } from "./ThemePicker";
 import { BLANK_TEMPLATE, type GiftTemplate } from "@/lib/giftTemplates";
 import styles from "./GiftWizard.module.css";
 
@@ -66,6 +67,7 @@ export function GiftWizard() {
     trigger,
     getValues,
     setValue,
+    watch,
     formState: { errors },
   } = useForm<CreateGiftFormInput>({
     resolver: zodResolver(createGiftSchema),
@@ -236,6 +238,7 @@ export function GiftWizard() {
             error={errors.recipientEmail?.message}
             {...register("recipientEmail")}
           />
+          <ThemePicker value={watch("themeId")} onChange={(id) => setValue("themeId", id)} />
           <div className={styles.nav}>
             <Button variant="secondary" onClick={back}>
               Back
@@ -319,9 +322,7 @@ export function GiftWizard() {
           {/* Safety notice — reminds users that payment is irreversible on-chain */}
           <ConfirmationSafetyNotice
             type="payment"
-            isTestnet={
-              (process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "testnet") !== "mainnet"
-            }
+            isTestnet={(process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "testnet") !== "mainnet"}
           />
 
           {/* Distinguish "unknown outcome" (connectivity drop mid-flight) from

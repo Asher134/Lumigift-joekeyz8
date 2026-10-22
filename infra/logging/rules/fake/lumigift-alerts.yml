@@ -1,0 +1,17 @@
+# Loki ruler alerts (Issue #337). "fake" is the tenant id when auth_enabled=false.
+groups:
+  - name: lumigift-logs
+    rules:
+      - alert: LumigiftHighErrorRate
+        expr: |
+          (
+            sum(count_over_time({app="lumigift", level=~"error|fatal"}[5m]))
+            /
+            sum(count_over_time({app="lumigift"}[5m]))
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "Lumigift error rate above 1% over 5 minutes"
+          runbook_url: https://github.com/joekeyz8/Lumigift-lumigift/blob/main/docs/ops/runbook.md#log-aggregation

@@ -15,6 +15,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCsrf } from "@/hooks/useCsrf";
 import type { GiftStatus } from "@/types";
+import { giftThemeStyle } from "@/lib/giftThemes";
 import styles from "./ClaimButton.module.css";
 
 const STELLAR_EXPLORER_BASE = "https://stellar.expert/explorer/testnet/tx";
@@ -27,6 +28,8 @@ interface ClaimButtonProps {
   giftId: string;
   recipientStellarKey: string;
   onStatusChange: (status: GiftStatus) => void;
+  /** Background theme of the gift being claimed. */
+  themeId?: string;
 }
 
 /** Maps known API error messages to friendly guidance. */
@@ -72,7 +75,14 @@ function mapClaimError(rawMessage: string): { message: string; canRetry: boolean
   };
 }
 
-export function ClaimButton({ giftId, recipientStellarKey, onStatusChange }: ClaimButtonProps) {
+export function ClaimButton({
+  giftId,
+  recipientStellarKey,
+  onStatusChange,
+  themeId,
+}: ClaimButtonProps) {
+  const themeStyle = giftThemeStyle(themeId);
+  const themeClass = themeStyle ? `${styles.wrapper} gift-theme` : styles.wrapper;
   const [claimError, setClaimError] = useState<{ message: string; canRetry: boolean } | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const { csrfFetch } = useCsrf();
@@ -113,7 +123,7 @@ export function ClaimButton({ giftId, recipientStellarKey, onStatusChange }: Cla
   // ── Success state ──────────────────────────────────────────────────────────
   if (txHash) {
     return (
-      <div className={styles.wrapper}>
+      <div className={themeClass} style={themeStyle}>
         <div className={styles.successBanner} role="status" aria-live="polite">
           <span aria-hidden="true" className={styles.successIcon}>
             ✅
@@ -143,7 +153,7 @@ export function ClaimButton({ giftId, recipientStellarKey, onStatusChange }: Cla
 
   // ── Default / error state ─────────────────────────────────────────────────
   return (
-    <div className={styles.wrapper}>
+    <div className={themeClass} style={themeStyle}>
       <button
         className="btn btn--primary"
         onClick={() => mutate()}
