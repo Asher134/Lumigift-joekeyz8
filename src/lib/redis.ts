@@ -130,6 +130,32 @@ export async function closeRedisClient(): Promise<void> {
 }
 
 /**
+ * Creates and connects a **dedicated** subscriber client.
+ *
+ * Redis pub/sub requires a separate connection — the subscriber client cannot
+ * issue regular commands while it is in subscribe mode.  Callers are
+ * responsible for calling `subscriber.quit()` when done (e.g. when an SSE
+ * connection closes).
+ *
+ * @returns A new, connected Redis subscriber client.
+ */
+export async function createSubscriberClient() {
+  const subscriber = createClient({ url: serverConfig.redis.url });
+  subscriber.on("error", (err: Error) => console.error("[Redis subscriber]", err));
+  await subscriber.connect();
+  return subscriber;
+}
+
+/**
+ * Returns the Redis channel name for gift status change events.
+ *
+ * Convention: `gift:status:<giftId>`
+ */
+export function giftStatusChannel(giftId: string): string {
+  return `gift:status:${giftId}`;
+}
+
+/**
  * Named export of the raw redis client getter for services that import `redis` directly.
  * @deprecated Use `getRedisClient()` instead.
  */

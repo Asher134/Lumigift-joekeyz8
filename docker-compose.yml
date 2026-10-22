@@ -152,6 +152,7 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  redis-replica-data:
 
 networks:
   lumigift-network:

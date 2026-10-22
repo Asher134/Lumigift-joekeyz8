@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { createGiftSchema } from "@/types/schemas";
+import { createGiftSchema, giftFilterSchema } from "@/types/schemas";
 import {
   createGift,
   getGiftsBySenderPaginated,
@@ -32,6 +32,20 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
   const userId = (session.user as { id: string }).id;
   const { searchParams } = req.nextUrl;
 
+  const filterResult = giftFilterSchema.safeParse({
+    status: searchParams.get("status") ?? undefined,
+    from: searchParams.get("from") ?? undefined,
+    to: searchParams.get("to") ?? undefined,
+    q: searchParams.get("q") ?? undefined,
+  });
+  if (!filterResult.success) {
+    return NextResponse.json<ApiResponse<never>>(
+      { success: false, error: "Invalid gift filters", code: "VALIDATION_ERROR" },
+      { status: 400 }
+    );
+  }
+  const filters = filterResult.data;
+
   // Offset-based pagination (page + limit)
   if (searchParams.has("page") || searchParams.has("limit")) {
     const page = Math.max(
@@ -42,7 +56,7 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
       MAX_LIMIT,
       Math.max(1, parseInt(searchParams.get("limit") ?? String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT)
     );
-    const result = await getGiftsBySenderPage(userId, page, limit);
+    const result = await getGiftsBySenderPage(userId, page, limit, filters);
     return NextResponse.json<ApiResponse<GiftPageOffset>>({ success: true, data: result });
   }
 
@@ -60,7 +74,7 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
     MAX_LIMIT,
     Math.max(1, parseInt(searchParams.get("pageSize") ?? "10", 10) || 10)
   );
-  const page = await getGiftsBySenderPaginated(userId, cursor, pageSize);
+  const page = await getGiftsBySenderPaginated(userId, cursor, pageSize, filters);
   return NextResponse.json<ApiResponse<GiftPage>>({
     success: true,
     data: {
@@ -82,9 +96,9 @@ export const POST = withErrorHandler(
         );
       }
 
-    const validation = await validateBody(req, createGiftSchema);
-    if (!validation.success) return validation.response;
-    const parsed = validation;
+      const validation = await validateBody(req, createGiftSchema);
+      if (!validation.success) return validation.response;
+      const parsed = validation;
 
       const userId = (session.user as { id: string }).id;
       const idempotencyKey = req.headers.get(IDEMPOTENCY_KEY_HEADER);

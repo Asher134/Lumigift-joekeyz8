@@ -10,7 +10,7 @@ import { useGiftDraft, type GiftDraft } from "../useGiftDraft";
 const STORAGE_KEY = "lumigift_gift_draft_v1";
 
 function clearStorage() {
-  sessionStorage.clear();
+  localStorage.clear();
 }
 
 beforeEach(clearStorage);
@@ -93,19 +93,92 @@ describe("useGiftDraft", () => {
     expect(result.current.readDraft()).toBeNull();
   });
 
-  it("uses sessionStorage (not localStorage) so data is tab-scoped", () => {
-    const localSpy = jest.spyOn(Storage.prototype, "setItem");
+  it("uses localStorage (not sessionStorage) so data is shared across tabs", () => {
+    const sessionSpy = jest.spyOn(Storage.prototype, "setItem");
     const { result } = renderHook(() => useGiftDraft());
 
     act(() => {
       result.current.saveDraft({ step: 1 });
     });
 
-    // The setItem call should be on sessionStorage, not localStorage
-    // We verify by checking sessionStorage has the key and localStorage does not
-    expect(sessionStorage.getItem(STORAGE_KEY)).not.toBeNull();
-    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    // The setItem call should be on localStorage, not sessionStorage
+    expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
+    expect(sessionStorage.getItem(STORAGE_KEY)).toBeNull();
 
-    localSpy.mockRestore();
+    sessionSpy.mockRestore();
+  });
+
+  it("syncs draft state across tabs via the storage event", () => {
+    const { result } = renderHook(() => useGiftDraft());
+
+    // Tab A saves a draft.
+    act(() => {
+      result.current.saveDraft({ step: 2, recipientName: "Amara", amountNgn: 5000 });
+    });
+    expect(result.current.readDraft()).toMatchObject({
+      step: 2,
+      recipientName: "Amara",
+      amountNgn: 5000,
+    });
+
+    // Tab B receives the storage event that Tab A's write dispatched.
+    const draft: GiftDraft = { step: 3, recipientName: "Temi", amountNgn: 7500 };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: STORAGE_KEY,
+          newValue: JSON.stringify(draft),
+        })
+      );
+    });
+
+    // The hook should adopt the cross-tab value without another localStorage write.
+    expect(result.current.readDraft()).toMatchObject(draft);
+  });
+
+  it("does not re-render when the storage event carries an unchanged draft", () => {
+    const { result } = renderHook(() => useGiftDraft());
+
+    act(() => {
+      result.current.saveDraft({ step: 1, recipientName: "Amara" });
+    });
+
+    // Dispatch a storage event with the same value — state must stay identical.
+    const same = { step: 1, recipientName: "Amara" };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(same));
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: STORAGE_KEY,
+          newValue: JSON.stringify(same),
+        })
+      );
+    });
+
+    expect(result.current.readDraft()).toMatchObject(same);
+  });
+
+  it("clears the draft across tabs when the storage event carries a null value", () => {
+    const { result } = renderHook(() => useGiftDraft());
+
+    act(() => {
+      result.current.saveDraft({ step: 1, recipientName: "Joe" });
+    });
+    expect(result.current.readDraft()).not.toBeNull();
+
+    // Simulate another tab clearing the draft.
+    localStorage.removeItem(STORAGE_KEY);
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: STORAGE_KEY,
+          newValue: null,
+        })
+      );
+    });
+
+    expect(result.current.readDraft()).toBeNull();
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 });

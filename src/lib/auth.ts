@@ -9,6 +9,7 @@ import { getCountryFromIp } from "@/lib/device";
 import { createHash } from "crypto";
 import { normalizePhone } from "@/lib/phone";
 import { verifyOtp } from "@/lib/otp";
+import { verifyAuthentication } from "@/lib/webauthn";
 import { serviceLogger } from "@/lib/logger";
 import { jwtRotationOptions } from "@/lib/jwt-rotation";
 
@@ -136,6 +137,34 @@ export const authOptions: NextAuthOptions = {
         }
 
         return user;
+      },
+    }),
+    // Issue #346 — passkey (WebAuthn) sign-in as an alternative to OTP.
+    CredentialsProvider({
+      id: "webauthn",
+      name: "Passkey",
+      credentials: {
+        phone: { label: "Phone", type: "text" },
+        response: { label: "WebAuthn response", type: "text" },
+      },
+      async authorize(credentials) {
+        const phone = credentials?.phone ? normalizePhone(credentials.phone) : null;
+        if (!phone || !credentials?.response) return null;
+
+        const { rows } = await pool.query<{ id: string; phone: string; name: string }>(
+          "SELECT id, phone, name FROM users WHERE phone = $1",
+          [phone]
+        );
+        const user = rows[0];
+        if (!user) return null;
+
+        try {
+          const verified = await verifyAuthentication(user.id, JSON.parse(credentials.response));
+          return verified ? user : null;
+        } catch (err) {
+          log.warn({ err }, "webauthn verification error");
+          return null;
+        }
       },
     }),
   ],

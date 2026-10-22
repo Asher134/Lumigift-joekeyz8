@@ -6,6 +6,7 @@ import type { Gift, GiftStatus, RefundStatus } from "@/types";
 import { GiftStatusBadge } from "@/components/ui/GiftStatusBadge";
 import { formatNGN } from "@/lib/currency";
 import { formatUnlockDate } from "@/lib/dateFormat";
+import { giftThemeStyle } from "@/lib/giftThemes";
 import { ClaimButton } from "./ClaimButton";
 import { ShareGift } from "./ShareGift";
 import { CancelGiftButton, RefundStatusNotice } from "./CancelGiftButton";
@@ -29,6 +30,7 @@ export function GiftCard({ gift, perspective, recipientStellarKey }: GiftCardPro
   const [status, setStatus] = useState<GiftStatus>(gift.status);
   const [refundStatus, setRefundStatus] = useState<RefundStatus | undefined>(gift.refundStatus);
   const isLocked = status === "locked";
+  const themeStyle = giftThemeStyle(gift.themeId);
   const name = perspective === "sender" ? `To: ${gift.recipientName}` : "A gift for you";
 
   const amountLabel =
@@ -51,7 +53,8 @@ export function GiftCard({ gift, perspective, recipientStellarKey }: GiftCardPro
 
   return (
     <article
-      className={styles.card}
+      className={themeStyle ? `${styles.card} gift-theme` : styles.card}
+      style={themeStyle}
       tabIndex={0}
       role="button"
       aria-label={cardLabel}
@@ -101,6 +104,7 @@ export function GiftCard({ gift, perspective, recipientStellarKey }: GiftCardPro
             giftId={gift.id}
             recipientStellarKey={recipientStellarKey}
             onStatusChange={setStatus}
+            themeId={gift.themeId}
           />
         </div>
       )}

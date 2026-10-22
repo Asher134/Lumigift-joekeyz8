@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { GIFT_THEME_IDS } from "@/lib/giftThemes";
 import { normalizePhone } from "@/lib/phone";
 import { formatNGN } from "@/lib/currency";
 
@@ -10,6 +11,8 @@ const e164Phone = z.string().transform((val, ctx) => {
   }
   return normalized;
 });
+
+export const GIFT_MESSAGE_MAX_LENGTH = 500;
 
 export const createGiftSchema = z.strictObject({
   recipientPhone: e164Phone,
@@ -25,7 +28,10 @@ export const createGiftSchema = z.strictObject({
       parseInt(process.env.GIFT_MAX_AMOUNT_NGN ?? "5000000", 10),
       `Maximum gift amount is ${formatNGN(parseInt(process.env.GIFT_MAX_AMOUNT_NGN ?? "5000000", 10))}`
     ),
-  message: z.string().max(500, "Message cannot exceed 500 characters").optional(),
+  message: z
+    .string()
+    .max(GIFT_MESSAGE_MAX_LENGTH, `Message cannot exceed ${GIFT_MESSAGE_MAX_LENGTH} characters`)
+    .optional(),
   unlockAt: z
     .string()
     .datetime()
@@ -33,6 +39,7 @@ export const createGiftSchema = z.strictObject({
   paymentProvider: z.enum(["paystack", "stripe"]),
   recipientIsRegistered: z.boolean().default(false),
   recipientEmail: z.string().email("Enter a valid email address").optional(),
+  themeId: z.enum(GIFT_THEME_IDS).optional(),
 });
 
 export const verifyOtpSchema = z.strictObject({
@@ -60,6 +67,31 @@ export const claimGiftSchema = z.strictObject({
 
 export const claimGiftRequestSchema = claimGiftSchema.omit({ giftId: true });
 
+const GIFT_STATUSES = [
+  "draft",
+  "pending_payment",
+  "funded",
+  "locked",
+  "unlocked",
+  "claimed",
+  "expired",
+  "cancelled",
+] as const;
+
+/** Query params for GET /api/v1/gifts search and filtering. */
+export const giftFilterSchema = z
+  .object({
+    status: z.enum(GIFT_STATUSES).optional(),
+    from: z.coerce.date().optional(),
+    to: z.coerce.date().optional(),
+    q: z.string().trim().min(1).max(100).optional(),
+  })
+  .refine((f) => !f.from || !f.to || f.from <= f.to, {
+    message: "`from` must be before `to`",
+    path: ["from"],
+  });
+
+export type GiftFilters = z.infer<typeof giftFilterSchema>;
 export type CreateGiftInput = z.infer<typeof createGiftSchema>;
 export type CreateGiftFormInput = z.input<typeof createGiftSchema>;
 export type VerifyOtpInput = z.infer<typeof verifyOtpSchema>;

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processUnlocks } from "@/server/services/scheduler.service";
-import { startTimer, recordCronSuccess, recordCronFailure } from "@/lib/metrics";
+import {
+  startTimer,
+  recordCronSuccess,
+  recordCronFailure,
+  recordDeadLetter,
+} from "@/lib/metrics";
 import type { ApiResponse } from "@/types";
 import { isAuthorizedCronRequest } from "@/server/cron-auth";
 
@@ -42,6 +47,7 @@ export const GET = async (req: NextRequest) => {
   } catch (err) {
     const durationMs = elapsed();
     recordCronFailure("cron/v1/unlock", durationMs, err);
+    await recordDeadLetter("cron/v1/unlock", durationMs, err);
     await pingHealthcheck("/fail"); // failure ping
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: "Cron job failed" },

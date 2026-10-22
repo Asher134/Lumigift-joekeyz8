@@ -1,25 +1,24 @@
 "use client";
 
 import { useForm } from "react-hook-form";
+import { clsx } from "clsx";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { createGiftSchema } from "@/types/schemas";
+import { createGiftSchema, GIFT_MESSAGE_MAX_LENGTH } from "@/types/schemas";
 import type { CreateGiftInput } from "@/types/schemas";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Button } from "@/components/ui/Button";
-import {
-  ApiErrorBanner,
-  classifyApiError,
-  type ApiErrorState,
-} from "@/components/ui/ApiErrorBanner";
 import { GiftPreview } from "./GiftPreview";
-import { useState, useRef } from "react";
+import { GiftPreviewCard } from "./GiftPreviewCard";
+import { useState } from "react";
 import { useCsrf } from "@/hooks/useCsrf";
 import { formatNGN } from "@/lib/currency";
+import { isAmbiguousDstTransition } from "@/lib/dateFormat";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { GiftFlowErrorBoundary } from "./GiftFlowErrorBoundary";
 import styles from "./CreateGiftForm.module.css";
 
-// ── Gift amount limits (mirrors env defaults & Zod schema — issue #270) ───────
+// ── Gift amount limits ────────────────────────────────────────────────────────
 const GIFT_MIN_AMOUNT_NGN = 500;
 const GIFT_MAX_AMOUNT_NGN = 5_000_000;
 const GIFT_DAILY_LIMIT_NGN = 1_000_000;
@@ -28,34 +27,38 @@ type Step = "form" | "preview";
 
 /**
  * Returns true when the supplied datetime-local string falls within a
- * known DST transition gap (heuristic: offset changes within ±2 hours).
+ * known DST transition gap (heuristic: offset changes within ±1 hour).
  */
 function isAmbiguousDstTransition(isoString: string): boolean {
   try {
     const date = new Date(isoString);
     const before = new Date(date.getTime() - 60 * 60 * 1000);
     const after = new Date(date.getTime() + 60 * 60 * 1000);
-    const offsetBefore = before.getTimezoneOffset();
-    const offsetAfter = after.getTimezoneOffset();
-    return offsetBefore !== offsetAfter;
+    return before.getTimezoneOffset() !== after.getTimezoneOffset();
   } catch {
     return false;
   }
 }
 
 export function CreateGiftForm() {
+  return (
+    <GiftFlowErrorBoundary>
+      <CreateGiftFormContent />
+    </GiftFlowErrorBoundary>
+  );
+}
+
+function CreateGiftFormContent() {
   const [step, setStep] = useState<Step>("form");
   const [error, setError] = useState<string | null>(null);
-  const [apiError, setApiError] = useState<ApiErrorState | null>(null);
   const [loading, setLoading] = useState(false);
   const [usdcEquivalent, setUsdcEquivalent] = useState("…");
   const [showUnregisteredWarning, setShowUnregisteredWarning] = useState(false);
   const [recipientRegistered, setRecipientRegistered] = useState<boolean | null>(null);
   const [unlockDstWarning, setUnlockDstWarning] = useState(false);
-
-  // Ref to the submit button that triggers the unregistered-recipient dialog;
-  // focus returns here when the dialog closes.
-  const submitButtonRef = useRef<HTMLButtonElement>(null);
+  // Raw datetime-local value — the form stores ISO for the shared Zod schema,
+  // but the DST gap check needs the wall-clock time the user typed.
+  const [unlockLocal, setUnlockLocal] = useState("");
 
   const { csrfFetch } = useCsrf();
   const queryClient = useQueryClient();
@@ -64,13 +67,19 @@ export function CreateGiftForm() {
     register,
     handleSubmit,
     getValues,
-    formState: { errors },
+    formState: { errors, isValid },
   } = useForm<CreateGiftInput>({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // Same schema the API validates against (src/types/schemas.ts).
     resolver: zodResolver(createGiftSchema) as any,
     defaultValues: { paymentProvider: "paystack", recipientIsRegistered: true },
-    mode: "onBlur",
+    // Validate each field on first blur, then on every change so errors
+    // clear as soon as the value is corrected.
+    mode: "onTouched",
   });
+
+  // Destructure the phone field's react-hook-form bindings so we can pass them
+  // to PhoneInput separately (it uses forwardRef + onChange/onBlur callbacks).
+  const phoneFieldProps = register("recipientPhone");
 
   // useMutation for gift creation — invalidates the gifts cache on success so
   // the dashboard reflects the new gift without a manual reload.
@@ -107,7 +116,7 @@ export function CreateGiftForm() {
     setError(null);
     setApiError(null);
     // Warn if the chosen local time falls in a DST gap
-    setUnlockDstWarning(isAmbiguousDstTransition(data.unlockAt));
+    setUnlockDstWarning(isAmbiguousDstTransition(unlockLocal));
     try {
       // Check if recipient is registered (GET — no CSRF needed)
       const checkRes = await fetch(
@@ -167,10 +176,8 @@ export function CreateGiftForm() {
     createGiftMutation.mutate(data);
   };
 
-  const handleRetry = () => {
-    setApiError(null);
-    onConfirm();
-  };
+  const messageLength = (watch("message") ?? "").length;
+  const messageRemaining = GIFT_MESSAGE_MAX_LENGTH - messageLength;
 
   if (step === "preview") {
     return (
@@ -201,15 +208,19 @@ export function CreateGiftForm() {
           {...register("recipientName")}
         />
 
-        <Input
+        {/*
+         * PhoneInput: live E.164 normalisation with human-readable preview.
+         * The Zod schema (via zodResolver) handles the final validation;
+         * PhoneInput also gives inline feedback before Zod fires (issue #271).
+         */}
+        <PhoneInput
+          {...phoneFieldProps}
           label="Recipient's Phone"
-          type="tel"
-          placeholder="+2348012345678"
           error={errors.recipientPhone?.message}
-          {...register("recipientPhone")}
+          defaultNigerian
         />
 
-        {/* Amount field — limits enforced in Zod schema and mirrored here (#270) */}
+        {/* Amount — limits enforced in Zod schema, mirrored here (#270) */}
         <Input
           label="Gift Amount (₦)"
           type="number"
@@ -228,7 +239,13 @@ export function CreateGiftForm() {
           label="Unlock Date &amp; Time"
           type="datetime-local"
           error={errors.unlockAt?.message}
-          {...register("unlockAt")}
+          {...register("unlockAt", {
+            setValueAs: (v: string) => {
+              const date = new Date(v);
+              return v && !isNaN(date.getTime()) ? date.toISOString() : v;
+            },
+            onChange: (e) => setUnlockLocal(e.target.value),
+          })}
         />
         {unlockDstWarning && (
           <p role="alert" className={styles.dstWarning}>
@@ -242,13 +259,24 @@ export function CreateGiftForm() {
           id="message"
           rows={3}
           placeholder="Write something heartfelt…"
+          maxLength={GIFT_MESSAGE_MAX_LENGTH}
           error={errors.message?.message}
+          aria-describedby={clsx("message-counter", errors.message && "message-error")}
           {...register("message")}
         />
+        <p
+          id="message-counter"
+          className={clsx(styles.counter, messageRemaining < 20 && styles.counterWarning)}
+          aria-live="polite"
+        >
+          {messageLength}/{GIFT_MESSAGE_MAX_LENGTH}
+        </p>
 
-        {apiError && <ApiErrorBanner error={apiError} onRetry={handleRetry} />}
+        <section aria-label="Gift card preview">
+          <GiftPreviewCard data={watch()} onEdit={() => {}} />
+        </section>
 
-        <Button ref={submitButtonRef} type="submit" fullWidth loading={loading}>
+        <Button type="submit" fullWidth loading={loading} disabled={!isValid}>
           Preview Gift →
         </Button>
       </form>

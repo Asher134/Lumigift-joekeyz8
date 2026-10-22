@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processExpiries } from "@/server/services/scheduler.service";
-import { startTimer, recordCronSuccess, recordCronFailure } from "@/lib/metrics";
+import {
+  recordCronSuccess,
+  recordCronFailure,
+  recordDeadLetter,
+} from "@/lib/metrics";
 import type { ApiResponse } from "@/types";
 import { isAuthorizedCronRequest } from "@/server/cron-auth";
 
@@ -51,7 +55,10 @@ export const GET = async (req: NextRequest) => {
       data: { message: "Expiry check complete", durationMs },
     });
   } catch (err) {
+    const durationMs = Date.now() - startedAt.getTime();
     console.error("[cron/expire] run failed", { startedAt, error: err });
+    recordCronFailure("cron/v1/expire", durationMs, err);
+    await recordDeadLetter("cron/v1/expire", durationMs, err);
     await pingHealthcheck("/fail"); // failure ping
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: "Expiry job failed" },
