@@ -61,6 +61,31 @@ export const claimGiftSchema = z.strictObject({
 
 export const claimGiftRequestSchema = claimGiftSchema.omit({ giftId: true });
 
+const GIFT_STATUSES = [
+  "draft",
+  "pending_payment",
+  "funded",
+  "locked",
+  "unlocked",
+  "claimed",
+  "expired",
+  "cancelled",
+] as const;
+
+/** Query params for GET /api/v1/gifts search and filtering. */
+export const giftFilterSchema = z
+  .object({
+    status: z.enum(GIFT_STATUSES).optional(),
+    from: z.coerce.date().optional(),
+    to: z.coerce.date().optional(),
+    q: z.string().trim().min(1).max(100).optional(),
+  })
+  .refine((f) => !f.from || !f.to || f.from <= f.to, {
+    message: "`from` must be before `to`",
+    path: ["from"],
+  });
+
+export type GiftFilters = z.infer<typeof giftFilterSchema>;
 export type CreateGiftInput = z.infer<typeof createGiftSchema>;
 export type CreateGiftFormInput = z.input<typeof createGiftSchema>;
 export type VerifyOtpInput = z.infer<typeof verifyOtpSchema>;

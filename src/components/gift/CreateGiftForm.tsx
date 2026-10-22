@@ -34,6 +34,9 @@ function CreateGiftFormContent() {
   const [showUnregisteredWarning, setShowUnregisteredWarning] = useState(false);
   const [recipientRegistered, setRecipientRegistered] = useState<boolean | null>(null);
   const [unlockDstWarning, setUnlockDstWarning] = useState(false);
+  // Raw datetime-local value — the form stores ISO for the shared Zod schema,
+  // but the DST gap check needs the wall-clock time the user typed.
+  const [unlockLocal, setUnlockLocal] = useState("");
 
   const { csrfFetch } = useCsrf();
   const queryClient = useQueryClient();
@@ -42,11 +45,14 @@ function CreateGiftFormContent() {
     register,
     handleSubmit,
     getValues,
-    formState: { errors },
+    formState: { errors, isValid },
   } = useForm<CreateGiftInput>({
+    // Same schema the API validates against (src/types/schemas.ts).
     resolver: zodResolver(createGiftSchema) as any,
     defaultValues: { paymentProvider: "paystack", recipientIsRegistered: true },
-    mode: "onBlur",
+    // Validate each field on first blur, then on every change so errors
+    // clear as soon as the value is corrected.
+    mode: "onTouched",
   });
 
   // useMutation for gift creation — invalidates the gifts cache on success so
@@ -82,7 +88,7 @@ function CreateGiftFormContent() {
     setLoading(true);
     setError(null);
     // Warn if the chosen local time falls in a DST gap
-    setUnlockDstWarning(isAmbiguousDstTransition(data.unlockAt));
+    setUnlockDstWarning(isAmbiguousDstTransition(unlockLocal));
     try {
       // Check if recipient is registered (GET — no CSRF needed)
       const checkRes = await fetch(
@@ -193,7 +199,13 @@ function CreateGiftFormContent() {
           label="Unlock Date & Time"
           type="datetime-local"
           error={errors.unlockAt?.message}
-          {...register("unlockAt")}
+          {...register("unlockAt", {
+            setValueAs: (v: string) => {
+              const date = new Date(v);
+              return v && !isNaN(date.getTime()) ? date.toISOString() : v;
+            },
+            onChange: (e) => setUnlockLocal(e.target.value),
+          })}
         />
         {unlockDstWarning && (
           <p role="alert" className={styles.dstWarning}>
@@ -211,7 +223,7 @@ function CreateGiftFormContent() {
           {...register("message")}
         />
 
-        <Button type="submit" fullWidth loading={loading}>
+        <Button type="submit" fullWidth loading={loading} disabled={!isValid}>
           Preview Gift →
         </Button>
       </form>
