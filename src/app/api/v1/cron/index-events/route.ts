@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { indexEscrowEvents } from "@/server/services/event-indexer.service";
-import { startTimer, recordCronSuccess, recordCronFailure } from "@/lib/metrics";
+import {
+  recordCronSuccess,
+  recordCronFailure,
+  recordDeadLetter,
+} from "@/lib/metrics";
 import type { ApiResponse } from "@/types";
 import { isAuthorizedCronRequest } from "@/server/cron-auth";
 
@@ -43,7 +47,7 @@ export const GET = async (req: NextRequest) => {
 
   try {
     const result = await indexEscrowEvents();
-    const durationMs = elapsed();
+    const durationMs = Date.now() - startedAt;
 
     console.log("[cron/index-events] run complete", { ...result, durationMs });
 
@@ -56,7 +60,10 @@ export const GET = async (req: NextRequest) => {
       data: { ...result, durationMs },
     });
   } catch (err) {
+    const durationMs = Date.now() - startedAt;
     console.error("[cron/index-events] run failed", err);
+    recordCronFailure("cron/v1/index-events", durationMs, err);
+    await recordDeadLetter("cron/v1/index-events", durationMs, err);
     await pingHealthcheck("/fail"); // failure ping
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: "Event indexing failed" },
