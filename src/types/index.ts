@@ -18,6 +18,7 @@ export type GiftStatus =
   | "locked"
   | "unlocked"
   | "claimed"
+  | "expired_pending_refund"
   | "expired"
   | "cancelled";
 
