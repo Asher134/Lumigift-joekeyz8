@@ -19,13 +19,14 @@ export const createGiftSchema = z.strictObject({
   recipientName: z.string().min(2, "Name must be at least 2 characters"),
   amountNgn: z
     .number()
+    .int("Gift amount must be a whole number of Naira")
     .min(
       parseInt(process.env.GIFT_MIN_AMOUNT_NGN ?? "500", 10),
       `Minimum gift amount is ${formatNGN(parseInt(process.env.GIFT_MIN_AMOUNT_NGN ?? "500", 10))}`
     )
     .max(
-      parseInt(process.env.GIFT_MAX_AMOUNT_NGN ?? "500000", 10),
-      `Maximum gift amount is ${formatNGN(parseInt(process.env.GIFT_MAX_AMOUNT_NGN ?? "500000", 10))}`
+      parseInt(process.env.GIFT_MAX_AMOUNT_NGN ?? "5000000", 10),
+      `Maximum gift amount is ${formatNGN(parseInt(process.env.GIFT_MAX_AMOUNT_NGN ?? "5000000", 10))}`
     ),
   message: z
     .string()

@@ -236,7 +236,7 @@ function CreateGiftFormContent() {
         </p>
 
         <Input
-          label="Unlock Date & Time"
+          label="Unlock Date &amp; Time"
           type="datetime-local"
           error={errors.unlockAt?.message}
           {...register("unlockAt", {
