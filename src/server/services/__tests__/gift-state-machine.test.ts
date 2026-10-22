@@ -8,6 +8,7 @@ describe("gift state machine", () => {
     ["funded", "locked"],
     ["locked", "unlocked"],
     ["unlocked", "claimed"],
+    ["unlocked", "expired"],
     // any → cancelled
     ["pending_payment", "cancelled"],
     ["funded", "cancelled"],
