@@ -87,3 +87,31 @@ export async function sendGiftInvitation(
     api_key: serverConfig.termii.apiKey,
   });
 }
+
+/**
+ * Reminds a recipient that their gift has expired but can still be claimed
+ * during the grace period before the escrow is refunded to the sender.
+ *
+ * @param phone - E.164-formatted destination phone number.
+ * @param amountUsdc - The gift amount in USDC.
+ * @param refundDueAt - When the grace period ends and the refund is processed.
+ * @returns Resolves when the SMS has been dispatched to Termii.
+ * @throws If the Termii API returns a non-2xx response.
+ */
+export async function sendExpiryGraceReminder(
+  phone: string,
+  amountUsdc: string,
+  refundDueAt: Date
+): Promise<void> {
+  await termiiClient.post("/sms/send", {
+    to: phone,
+    from: serverConfig.termii.senderId,
+    sms:
+      `Lumigift: Your ${amountUsdc} USDC gift has expired. 🎁\n` +
+      `Claim it before ${refundDueAt.toUTCString()} or it will be refunded to the sender: ` +
+      `${serverConfig.app.url}/claim`,
+    type: "plain",
+    channel: "generic",
+    api_key: serverConfig.termii.apiKey,
+  });
+}

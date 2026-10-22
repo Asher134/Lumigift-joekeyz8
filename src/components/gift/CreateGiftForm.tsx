@@ -1,13 +1,15 @@
 "use client";
 
 import { useForm } from "react-hook-form";
+import { clsx } from "clsx";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { createGiftSchema } from "@/types/schemas";
+import { createGiftSchema, GIFT_MESSAGE_MAX_LENGTH } from "@/types/schemas";
 import type { CreateGiftInput } from "@/types/schemas";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Button } from "@/components/ui/Button";
 import { GiftPreview } from "./GiftPreview";
+import { GiftPreviewCard } from "./GiftPreviewCard";
 import { useState } from "react";
 import { useCsrf } from "@/hooks/useCsrf";
 import { formatNGN } from "@/lib/currency";
@@ -34,6 +36,9 @@ function CreateGiftFormContent() {
   const [showUnregisteredWarning, setShowUnregisteredWarning] = useState(false);
   const [recipientRegistered, setRecipientRegistered] = useState<boolean | null>(null);
   const [unlockDstWarning, setUnlockDstWarning] = useState(false);
+  // Raw datetime-local value — the form stores ISO for the shared Zod schema,
+  // but the DST gap check needs the wall-clock time the user typed.
+  const [unlockLocal, setUnlockLocal] = useState("");
 
   const { csrfFetch } = useCsrf();
   const queryClient = useQueryClient();
@@ -42,11 +47,14 @@ function CreateGiftFormContent() {
     register,
     handleSubmit,
     getValues,
-    formState: { errors },
+    formState: { errors, isValid },
   } = useForm<CreateGiftInput>({
+    // Same schema the API validates against (src/types/schemas.ts).
     resolver: zodResolver(createGiftSchema) as any,
     defaultValues: { paymentProvider: "paystack", recipientIsRegistered: true },
-    mode: "onBlur",
+    // Validate each field on first blur, then on every change so errors
+    // clear as soon as the value is corrected.
+    mode: "onTouched",
   });
 
   // useMutation for gift creation — invalidates the gifts cache on success so
@@ -82,7 +90,7 @@ function CreateGiftFormContent() {
     setLoading(true);
     setError(null);
     // Warn if the chosen local time falls in a DST gap
-    setUnlockDstWarning(isAmbiguousDstTransition(data.unlockAt));
+    setUnlockDstWarning(isAmbiguousDstTransition(unlockLocal));
     try {
       // Check if recipient is registered (GET — no CSRF needed)
       const checkRes = await fetch(
@@ -139,6 +147,9 @@ function CreateGiftFormContent() {
     createGiftMutation.mutate(data);
   };
 
+  const messageLength = (watch("message") ?? "").length;
+  const messageRemaining = GIFT_MESSAGE_MAX_LENGTH - messageLength;
+
   if (step === "preview") {
     return (
       <GiftPreview
@@ -193,7 +204,13 @@ function CreateGiftFormContent() {
           label="Unlock Date & Time"
           type="datetime-local"
           error={errors.unlockAt?.message}
-          {...register("unlockAt")}
+          {...register("unlockAt", {
+            setValueAs: (v: string) => {
+              const date = new Date(v);
+              return v && !isNaN(date.getTime()) ? date.toISOString() : v;
+            },
+            onChange: (e) => setUnlockLocal(e.target.value),
+          })}
         />
         {unlockDstWarning && (
           <p role="alert" className={styles.dstWarning}>
@@ -207,11 +224,24 @@ function CreateGiftFormContent() {
           id="message"
           rows={3}
           placeholder="Write something heartfelt…"
+          maxLength={GIFT_MESSAGE_MAX_LENGTH}
           error={errors.message?.message}
+          aria-describedby={clsx("message-counter", errors.message && "message-error")}
           {...register("message")}
         />
+        <p
+          id="message-counter"
+          className={clsx(styles.counter, messageRemaining < 20 && styles.counterWarning)}
+          aria-live="polite"
+        >
+          {messageLength}/{GIFT_MESSAGE_MAX_LENGTH}
+        </p>
 
-        <Button type="submit" fullWidth loading={loading}>
+        <section aria-label="Gift card preview">
+          <GiftPreviewCard data={watch()} onEdit={() => {}} />
+        </section>
+
+        <Button type="submit" fullWidth loading={loading} disabled={!isValid}>
           Preview Gift →
         </Button>
       </form>

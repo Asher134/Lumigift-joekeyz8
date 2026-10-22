@@ -49,6 +49,9 @@ export const serverConfig = {
     maxAmountNgn: env.GIFT_MAX_AMOUNT_NGN,
     dailyLimitNgn: env.GIFT_DAILY_LIMIT_NGN,
   },
+  giftExpiry: {
+    gracePeriodDays: env.GIFT_EXPIRY_GRACE_PERIOD_DAYS,
+  },
   cloudinary: {
     cloudName: env.CLOUDINARY_CLOUD_NAME,
     apiKey: env.CLOUDINARY_API_KEY,

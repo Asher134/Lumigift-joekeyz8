@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { GiftCard } from "@/components/gift/GiftCard";
+import { VirtualGiftList } from "@/components/gift/VirtualGiftList";
 import { GiftCardSkeleton } from "@/components/gift/GiftCardSkeleton";
+import { OfflineBanner } from "@/components/ui/OfflineBanner";
 import styles from "./page.module.css";
 import type { ApiResponse } from "@/types";
 import type { GiftPage } from "@/server/services/gift.service";
@@ -53,6 +54,7 @@ export default function DashboardPage() {
     return (
       <div className={styles.page}>
         <div className="container">
+          <OfflineBanner />
           <h1 className={styles.title}>Your Gifts</h1>
           {/* Issue #279: aria-busy + aria-label on skeleton wrapper; default 3 cards */}
           <div
@@ -73,6 +75,7 @@ export default function DashboardPage() {
     return (
       <div className={styles.page}>
         <div className="container">
+          <OfflineBanner />
           <h1 className={styles.title}>Your Gifts</h1>
           <div className={styles.errorState} role="alert">
             <p className={styles.errorMessage}>Failed to load your gifts. Please try again.</p>
@@ -94,6 +97,7 @@ export default function DashboardPage() {
   return (
     <div className={styles.page}>
       <div className="container">
+        <OfflineBanner />
         <h1 className={styles.title}>Your Gifts</h1>
 
         {/* Stale/background-revalidation banner */}
@@ -139,18 +143,13 @@ export default function DashboardPage() {
             </p>
 
             {/* Skeleton replaces grid while fetching next/prev page */}
-            <div
-              className={styles.grid}
-              aria-live="polite"
-              aria-busy={isFetching}
-              aria-label={isFetching ? "Loading gifts" : undefined}
-            >
-              {isFetching ? (
+            {isFetching ? (
+              <div className={styles.grid} aria-live="polite" aria-busy="true">
                 <GiftCardSkeleton count={PAGE_SIZE} />
-              ) : (
-                gifts.map((gift) => <GiftCard key={gift.id} gift={gift} perspective="sender" />)
-              )}
-            </div>
+              </div>
+            ) : (
+              <VirtualGiftList gifts={gifts} perspective="sender" />
+            )}
 
             <nav className={styles.pagination} aria-label="Gift history pagination">
               <button

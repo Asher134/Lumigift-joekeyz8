@@ -7,11 +7,13 @@ const TRANSITIONS: Record<GiftStatus, Set<GiftStatus>> = {
   pending_payment: new Set<GiftStatus>(["funded", "cancelled"]),
   funded: new Set<GiftStatus>(["locked", "cancelled"]),
   locked: new Set<GiftStatus>(["unlocked", "cancelled"]),
-  unlocked: new Set<GiftStatus>(["claimed", "cancelled"]),
+  unlocked: new Set<GiftStatus>(["claimed", "cancelled", "expired_pending_refund"]),
   claimed: new Set<GiftStatus>(),
   cancelled: new Set<GiftStatus>(),
   // legacy / edge statuses
   draft: new Set<GiftStatus>(["pending_payment", "cancelled"]),
+  // late claims are still allowed during the expiry grace period
+  expired_pending_refund: new Set<GiftStatus>(["claimed", "expired"]),
   expired: new Set<GiftStatus>(),
 };
 

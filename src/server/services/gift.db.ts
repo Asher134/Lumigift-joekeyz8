@@ -28,6 +28,7 @@ export interface CreateGiftDbInput {
   amountUsdc: string;
   message?: string;
   mediaUrl?: string;
+  themeId?: string;
   unlockAt: Date;
   /** Payment provider used for this gift */
   provider?: "paystack" | "stripe";
@@ -45,6 +46,7 @@ export interface GiftDbRow {
   amount_usdc: string;
   message: string | null;
   media_url: string | null;
+  theme_id?: string | null;
   unlock_at: Date;
   status: GiftStatus;
   contract_id: string | null;
@@ -67,6 +69,7 @@ export function rowToGift(row: GiftDbRow): Gift {
     amountUsdc: row.amount_usdc,
     message: row.message ?? undefined,
     mediaUrl: row.media_url ?? undefined,
+    themeId: row.theme_id ?? undefined,
     unlockAt: new Date(row.unlock_at),
     status: row.status,
     contractId: row.contract_id ?? undefined,
@@ -106,11 +109,11 @@ export async function persistGiftWithPaymentRef(input: CreateGiftDbInput): Promi
       `INSERT INTO gifts (
           id, sender_id, recipient_phone_hash, recipient_name, recipient_email,
           amount_ngn, amount_usdc, message, media_url, unlock_at,
-          status, created_at, updated_at
+          theme_id, status, created_at, updated_at
         ) VALUES (
           $1, $2, $3, $4, $5,
           $6, $7, $8, $9, $10,
-          'pending_payment', NOW(), NOW()
+          $11, 'pending_payment', NOW(), NOW()
         )
         RETURNING *`,
       [
@@ -124,6 +127,7 @@ export async function persistGiftWithPaymentRef(input: CreateGiftDbInput): Promi
         input.message ?? null,
         input.mediaUrl ?? null,
         input.unlockAt,
+        input.themeId ?? null,
       ]
     );
 

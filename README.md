@@ -8,6 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 [![Built on Stellar](https://img.shields.io/badge/Built%20on-Stellar-blue)](https://stellar.org)
 [![Soroban](https://img.shields.io/badge/Smart%20Contracts-Soroban-blueviolet)](https://developers.stellar.org/docs/build/smart-contracts)
+[![Status](https://img.shields.io/badge/status-page-green)](https://status.lumigift.app)
 
 ---
 
@@ -240,12 +241,12 @@ npx stryker run --mutate "src/server/services/gift.service.ts,src/lib/escrow-cli
 
 See `stryker.config.js`. Key settings:
 
-| Option               | Value                               |
-| -------------------- | ----------------------------------- |
-| `thresholds.break`   | `70` — CI fails below this score    |
-| `thresholds.low`     | `70` — score is highlighted in red  |
-| `thresholds.high`    | `80` — score is highlighted in green|
-| High-priority files  | `gift.service.ts`, `escrow-client.ts` |
+| Option              | Value                                 |
+| ------------------- | ------------------------------------- |
+| `thresholds.break`  | `70` — CI fails below this score      |
+| `thresholds.low`    | `70` — score is highlighted in red    |
+| `thresholds.high`   | `80` — score is highlighted in green  |
+| High-priority files | `gift.service.ts`, `escrow-client.ts` |
 
 HTML reports are saved to `reports/mutation/` and uploaded as CI artifacts.
 

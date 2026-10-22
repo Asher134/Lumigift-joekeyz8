@@ -11,6 +11,7 @@ This runbook provides procedures for handling common production incidents in Lum
   - P2 (Medium): <4 hours
 - **Communication**: Update stakeholders via Slack #incidents channel
 - **Post-Mortem**: Conduct blameless post-mortem for all P0/P1 incidents
+- **Logs Dashboard**: Grafana Explore (Loki) at `${GRAFANA_URL}/explore` — see [Log Aggregation](#log-aggregation)
 
 ## Database Connection Failure
 
@@ -313,6 +314,11 @@ Lumigift Team
 _This runbook is reviewed quarterly and updated as systems evolve. Last reviewed: [Date]_
 
 ## Log Aggregation
+
+**Dashboard**: Grafana Explore (Loki) at `${GRAFANA_URL}/explore`. Logs are queryable by
+`requestId`, `userId`, `giftId` and `level`; the `LumigiftHighErrorRate` alert fires when
+the error rate exceeds 1% over 5 minutes. Setup, queries and retention:
+[log-aggregation.md](./log-aggregation.md).
 
 ### Overview
 

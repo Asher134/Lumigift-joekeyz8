@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { ToastProvider } from "@/components/ui/ToastContext";
 import { Toaster } from "@/components/ui/Toaster";
-import { I18nProvider } from "@/i18n/I18nProvider";
+import { SupportWidget } from "@/components/ui/SupportWidget";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [client] = useState(
@@ -22,13 +22,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
       })
   );
   return (
-    <I18nProvider>
-      <QueryClientProvider client={client}>
-        <ToastProvider>
-          {children}
-          <Toaster />
-        </ToastProvider>
-      </QueryClientProvider>
-    </I18nProvider>
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        {children}
+        <Toaster />
+        <SupportWidget />
+      </ToastProvider>
+    </QueryClientProvider>
   );
 }
