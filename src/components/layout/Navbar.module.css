@@ -78,3 +78,36 @@
     display: none;
   }
 }
+
+/* ── Language selector ─────────────────────────────────────────────────────── */
+
+.langSelect {
+  appearance: none;
+  background-color: transparent;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-family: inherit;
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.langSelect:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-border);
+}
+
+.langSelect:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .langSelect {
+    display: none;
+  }
+}

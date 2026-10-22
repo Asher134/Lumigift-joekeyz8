@@ -123,3 +123,14 @@
   justify-content: flex-end;
   margin-top: var(--space-6);
 }
+
+.counter {
+  margin-top: calc(var(--space-4) * -1);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  text-align: right;
+}
+
+.counterWarning {
+  color: var(--color-error);
+}

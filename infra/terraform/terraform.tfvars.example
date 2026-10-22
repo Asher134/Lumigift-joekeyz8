@@ -10,3 +10,10 @@ db_instance_class  = "db.t4g.micro"
 redis_node_type    = "cache.t4g.micro"
 app_image          = "123456789012.dkr.ecr.us-east-1.amazonaws.com/lumigift:latest"
 domain_name        = "lumigift.app"
+
+# Vercel (#335) — set VERCEL_API_TOKEN in the environment, not here
+vercel_team_id       = "team_xxxxxxxxxxxxxxxxxxxxxxxx"
+vercel_project_name  = "lumigift"
+vercel_git_repo      = "lumigift/lumigift"
+vercel_env_secret_id = "lumigift/prod/vercel-env"
+vercel_env_keys      = ["DATABASE_URL", "REDIS_URL", "NEXTAUTH_SECRET", "PAYSTACK_SECRET_KEY"]

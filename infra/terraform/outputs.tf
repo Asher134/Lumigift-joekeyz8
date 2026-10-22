@@ -38,3 +38,8 @@ output "backup_sns_topic_arn" {
   description = "SNS topic ARN for backup failure alerts"
   value       = aws_sns_topic.backup_alerts.arn
 }
+
+output "vercel_project_id" {
+  description = "Vercel project ID for the frontend"
+  value       = vercel_project.frontend.id
+}

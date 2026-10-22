@@ -15,7 +15,7 @@ import type { ApiResponse, SupportCase } from "@/types";
 /**
  * POST /api/v1/support/cases
  *
- * Body: `{ giftId: string, reason: string, details?: string }`
+ * Body: `{ giftId?: string, reason: string, details?: string }`
  *
  * Idempotent — returns the existing open case if one already exists for the
  * same user + gift combination.
@@ -27,8 +27,11 @@ export const POST = withErrorHandler(
 
     const body = await req.json().catch(() => null);
 
-    if (!body || typeof body.giftId !== "string" || !body.giftId.trim()) {
-      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "giftId is required", 400);
+    if (!body) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Invalid request body", 400);
+    }
+    if (body.giftId !== undefined && (typeof body.giftId !== "string" || !body.giftId.trim())) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "giftId must be a non-empty string", 400);
     }
     if (typeof body.reason !== "string" || !body.reason.trim()) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "reason is required", 400);
@@ -37,7 +40,7 @@ export const POST = withErrorHandler(
     const details: string | undefined =
       typeof body.details === "string" ? body.details.trim() || undefined : undefined;
 
-    const supportCase = createSupportCase(userId, body.giftId.trim(), body.reason.trim(), details);
+    const supportCase = createSupportCase(userId, body.giftId?.trim(), body.reason.trim(), details);
 
     return NextResponse.json<ApiResponse<SupportCase>>(
       { success: true, data: supportCase },

@@ -5,7 +5,7 @@
  * (Map).  A production implementation would persist to the database; the Map
  * is the intentional source of truth here so no migration is required.
  */
-import type { SupportCase, SupportCaseStatus } from "@/types";
+import type { SupportCase, SupportCaseMessage, SupportCaseStatus } from "@/types";
 
 // ─── In-memory store ──────────────────────────────────────────────────────────
 /** Primary index: caseReference → SupportCase */
@@ -42,21 +42,23 @@ function generateCaseId(): string {
  * combination, the existing case is returned without creating a duplicate.
  *
  * @param userId  - UUID of the authenticated user filing the case.
- * @param giftId  - UUID of the gift that experienced the issue.
+ * @param giftId  - UUID of the gift that experienced the issue (omit for general enquiries).
  * @param reason  - Short description of the problem.
  * @param details - Optional extended details.
  * @returns The existing or newly-created {@link SupportCase}.
  */
 export function createSupportCase(
   userId: string,
-  giftId: string,
+  giftId: string | undefined,
   reason: string,
   details?: string
 ): SupportCase {
   // Deduplication: return any existing open case for the same user+gift
-  for (const existing of caseStore.values()) {
-    if (existing.userId === userId && existing.giftId === giftId && existing.status === "open") {
-      return existing;
+  if (giftId) {
+    for (const existing of caseStore.values()) {
+      if (existing.userId === userId && existing.giftId === giftId && existing.status === "open") {
+        return existing;
+      }
     }
   }
 
@@ -69,6 +71,8 @@ export function createSupportCase(
     reason,
     details,
     status: "open" as SupportCaseStatus,
+    messages: [],
+    hasUnreadReply: false,
     createdAt: now,
     updatedAt: now,
   };
@@ -97,4 +101,36 @@ export function listSupportCases(userId?: string): SupportCase[] {
   const all = Array.from(caseStore.values());
   const filtered = userId ? all.filter((c) => c.userId === userId) : all;
   return filtered.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+
+/**
+ * Appends a message to a support case thread. Agent replies flag the case as
+ * unread for the owning user.
+ *
+ * @returns The updated {@link SupportCase}, or `null` if not found.
+ */
+export function addSupportCaseMessage(
+  caseReference: string,
+  author: SupportCaseMessage["author"],
+  body: string
+): SupportCase | null {
+  const supportCase = caseStore.get(caseReference);
+  if (!supportCase) return null;
+
+  const now = new Date();
+  supportCase.messages.push({
+    id: `msg-${now.getTime().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    author,
+    body,
+    createdAt: now,
+  });
+  if (author === "agent") supportCase.hasUnreadReply = true;
+  supportCase.updatedAt = now;
+  return supportCase;
+}
+
+/** Clears the unread-reply flag once the owning user has viewed the case. */
+export function markSupportCaseRead(caseReference: string): void {
+  const supportCase = caseStore.get(caseReference);
+  if (supportCase) supportCase.hasUnreadReply = false;
 }

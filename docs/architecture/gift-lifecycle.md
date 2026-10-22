@@ -31,80 +31,64 @@ The state machine is enforced at runtime by `src/server/services/gift-state-mach
 
 ## 1. States Overview
 
-| State | Terminal? | Owner | Description |
-|---|---|---|---|
-| `draft` | No | Sender | Gift form filled, payment not yet initiated |
-| `pending_payment` | No | Payment provider | Awaiting Paystack charge confirmation |
-| `funded` | No | System | Payment confirmed, contract deployment pending |
-| `locked` | No | Smart contract | USDC locked in Soroban escrow until `unlockAt` |
-| `unlocked` | No | System / Recipient | `unlockAt` has passed, claim available |
-| `claimed` | **Yes** | Recipient | USDC transferred to recipient's Stellar wallet |
-| `cancelled` | **Yes** | Sender / System | Gift cancelled, refund issued if funded |
-| `expired` | **Yes** | System (cron) | Unclaimed after 365 days, USDC returned to sender |
+| State             | Terminal? | Owner              | Description                                       |
+| ----------------- | --------- | ------------------ | ------------------------------------------------- |
+| `draft`           | No        | Sender             | Gift form filled, payment not yet initiated       |
+| `pending_payment` | No        | Payment provider   | Awaiting Paystack charge confirmation             |
+| `funded`          | No        | System             | Payment confirmed, contract deployment pending    |
+| `locked`          | No        | Smart contract     | USDC locked in Soroban escrow until `unlockAt`    |
+| `unlocked`        | No        | System / Recipient | `unlockAt` has passed, claim available            |
+| `claimed`         | **Yes**   | Recipient          | USDC transferred to recipient's Stellar wallet    |
+| `cancelled`       | **Yes**   | Sender / System    | Gift cancelled, refund issued if funded           |
+| `expired`         | **Yes**   | System (cron)      | Unclaimed after 365 days, USDC returned to sender |
 
 ---
 
 ## 2. State Transition Diagram
 
+```mermaid
+stateDiagram-v2
+    [*] --> draft: createGift()
+    draft --> pending_payment: submit gift for payment
+    draft --> cancelled: sender cancels draft
+    pending_payment --> funded: Paystack charge.success
+    pending_payment --> cancelled: payment fails or sender cancels
+    funded --> locked: escrow deployment succeeds
+    funded --> cancelled: escrow setup fails
+    locked --> unlocked: unlock cron sees unlockAt passed
+    locked --> cancelled: sender cancels before unlock
+    unlocked --> claimed: recipient claim succeeds
+    unlocked --> expired: daily expiry cron after 365 unclaimed days
+    unlocked --> cancelled: sender cancels
+    claimed --> [*]
+    cancelled --> [*]
+    expired --> refunded: escrow refund succeeds
+    refunded --> [*]
+    note right of funded: Persisted status for a paid gift before it is locked.
+    note right of refunded: Escrow outcome, not a persisted GiftStatus.
 ```
-                          ┌──────────┐
-                          │  START   │
-                          └────┬─────┘
-                               │ createGift()
-                               ▼
-                          ┌──────────┐
-                     ┌───▶│  draft   │
-                     │    └────┬─────┘
-                     │         │ submit payment
-                     │         ▼
-                     │  ┌─────────────────┐
-              cancel │  │ pending_payment │
-                     │  └────┬────────────┘
-                     │       │ Paystack charge.success
-                     │       ▼
-                     │  ┌──────────┐
-                     ├──│  funded  │
-                     │  └────┬─────┘
-                     │       │ escrow contract deployed + funded
-                     │       ▼
-                     │  ┌──────────┐
-                     ├──│  locked  │
-                     │  └────┬─────┘
-                     │       │ cron/unlock (unlockAt passed)
-                     │       ▼
-                     │  ┌──────────┐
-                     ├──│ unlocked │─────────────────────────┐
-                     │  └────┬─────┘                         │
-                     │       │ claimGift()                   │ 365 days unclaimed
-                     │       ▼                               ▼
-                     │  ┌──────────┐               ┌─────────────┐
-                     │  │ claimed  │               │   expired   │
-                     │  └──────────┘               └─────────────┘
-                     │  (terminal)                  (terminal)
-                     │
-                     └──▶ ┌───────────┐
-                          │ cancelled │
-                          └───────────┘
-                          (terminal)
-```
+
+`funded` is the persisted status corresponding to the paid stage. `refunded` is
+not a gift status in `GiftStatus`; the refund is a separate escrow operation
+that follows expiry.
 
 ---
 
 ## 3. Transition Table
 
-| From | To | Triggered by | API / Actor |
-|---|---|---|---|
-| `draft` | `pending_payment` | User submits payment | `POST /api/v1/gifts` → redirect to Paystack |
-| `draft` | `cancelled` | User cancels | `DELETE /api/v1/gifts/:id` |
-| `pending_payment` | `funded` | Payment confirmed | Paystack `charge.success` webhook |
-| `pending_payment` | `cancelled` | Payment failure / timeout | Paystack failure event or expiry cron |
-| `funded` | `locked` | Contract deployed and funded | `gift.service.ts` (background, after webhook) |
-| `funded` | `cancelled` | Contract deployment failure | `gift.service.ts` error path |
-| `locked` | `unlocked` | `unlockAt` timestamp passed | `GET /api/v1/cron/unlock` (scheduler) |
-| `locked` | `cancelled` | Sender cancels before unlock | `DELETE /api/v1/gifts/:id` |
-| `unlocked` | `claimed` | Recipient claims | `POST /api/v1/gifts/:id/claim` |
-| `unlocked` | `expired` | 365 days unclaimed | `GET /api/v1/cron/expire` (scheduler) |
-| `unlocked` | `cancelled` | Sender cancels after unlock | `DELETE /api/v1/gifts/:id` (edge case) |
+| From              | To                | Triggered by                 | API / Actor                                   |
+| ----------------- | ----------------- | ---------------------------- | --------------------------------------------- |
+| `draft`           | `pending_payment` | User submits payment         | `POST /api/v1/gifts` → redirect to Paystack   |
+| `draft`           | `cancelled`       | User cancels                 | `DELETE /api/v1/gifts/:id`                    |
+| `pending_payment` | `funded`          | Payment confirmed            | Paystack `charge.success` webhook             |
+| `pending_payment` | `cancelled`       | Payment failure / timeout    | Paystack failure event or expiry cron         |
+| `funded`          | `locked`          | Contract deployed and funded | `gift.service.ts` (background, after webhook) |
+| `funded`          | `cancelled`       | Contract deployment failure  | `gift.service.ts` error path                  |
+| `locked`          | `unlocked`        | `unlockAt` timestamp passed  | `GET /api/v1/cron/unlock` (scheduler)         |
+| `locked`          | `cancelled`       | Sender cancels before unlock | `DELETE /api/v1/gifts/:id`                    |
+| `unlocked`        | `claimed`         | Recipient claims             | `POST /api/v1/gifts/:id/claim`                |
+| `unlocked`        | `expired`         | 365 days unclaimed           | `GET /api/v1/cron/expire` (scheduler)         |
+| `unlocked`        | `cancelled`       | Sender cancels after unlock  | `DELETE /api/v1/gifts/:id` (edge case)        |
 
 Any attempt to perform a transition not listed above is rejected by `assertValidTransition` with error code `GIFT_INVALID_STATE` (HTTP 409).
 
@@ -123,6 +107,7 @@ The gift record has been created from the send form but payment has not been ini
 The gift may exist in this state for up to the session duration before being submitted.
 
 **Valid transitions:**
+
 - `pending_payment` — sender proceeds to payment
 - `cancelled` — sender abandons
 
@@ -140,6 +125,7 @@ The user has been redirected to Paystack's checkout. The app is waiting for a `c
 Gifts stuck in this state for more than the configured timeout (default: 30 minutes) are automatically cancelled by the expiry cron job.
 
 **Valid transitions:**
+
 - `funded` — Paystack webhook confirms successful charge
 - `cancelled` — payment failure, user abandons, or expiry timeout
 
@@ -155,6 +141,7 @@ Gifts stuck in this state for more than the configured timeout (default: 30 minu
 Payment has been confirmed. The service layer now attempts to deploy and fund the Soroban escrow contract asynchronously. This state should be transient — typically milliseconds — but may persist longer if the Stellar network is congested.
 
 **Valid transitions:**
+
 - `locked` — contract deployed and funded successfully
 - `cancelled` — contract deployment failed after all retries
 
@@ -172,6 +159,7 @@ The gift's USDC is held in the time-locked Soroban escrow contract. No party can
 Gifts in this state are invisible to the recipient until the status advances to `unlocked`.
 
 **Valid transitions:**
+
 - `unlocked` — cron job processes unlock after `unlockAt`
 - `cancelled` — sender cancels before `unlockAt`
 
@@ -187,6 +175,7 @@ Gifts in this state are invisible to the recipient until the status advances to 
 The recipient may now claim the gift. The surprise is revealed — the frontend displays the gift card in full, and the claim button becomes active. Notifications (SMS and/or email) are sent to the recipient.
 
 **Valid transitions:**
+
 - `claimed` — recipient submits a valid Stellar public key and the claim succeeds
 - `expired` — 365 days pass without a claim (cron job)
 - `cancelled` — sender cancels (edge case; refund process triggered)
@@ -214,11 +203,11 @@ The USDC has been delivered. No further state changes are possible. The sender's
 A catch-all terminal state for any abandonment or failure path.  
 The refund behavior depends on how far the gift progressed:
 
-| Stage at cancellation | Refund |
-|---|---|
-| `draft` / `pending_payment` | No charge yet — no refund needed |
-| `funded` (contract failed) | Paystack refund initiated |
-| `locked` / `unlocked` | Paystack refund + Soroban contract cancel (returns USDC to server account for settlement) |
+| Stage at cancellation       | Refund                                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------------------- |
+| `draft` / `pending_payment` | No charge yet — no refund needed                                                          |
+| `funded` (contract failed)  | Paystack refund initiated                                                                 |
+| `locked` / `unlocked`       | Paystack refund + Soroban contract cancel (returns USDC to server account for settlement) |
 
 ---
 
@@ -303,12 +292,12 @@ Sender browser         Next.js API          Paystack         Stellar
 
 ## 7. Cron Job Responsibilities
 
-| Endpoint | Frequency | Action |
-|---|---|---|
-| `GET /api/v1/cron/unlock` | Every minute | Query `locked` gifts where `unlockAt <= NOW()`. Advance status to `unlocked`. Send recipient notifications. |
-| `GET /api/v1/cron/expire` | Daily | Query `pending_payment` gifts older than 30 minutes. Move to `cancelled`. Query `unlocked` gifts older than 365 days. Move to `expired` and trigger refund. |
-| `GET /api/v1/cron/reconcile` | Hourly | Query `funded` gifts older than 5 minutes (contract deployment should be near-instant). Retry deployment or escalate. |
-| `GET /api/v1/cron/index-events` | Every 5 minutes | Fetch new Soroban events from RPC and persist to `contract_events` table. |
+| Endpoint                        | Frequency       | Action                                                                                                                                                      |
+| ------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/cron/unlock`       | Every minute    | Query `locked` gifts where `unlockAt <= NOW()`. Advance status to `unlocked`. Send recipient notifications.                                                 |
+| `GET /api/v1/cron/expire`       | Daily           | Query `pending_payment` gifts older than 30 minutes. Move to `cancelled`. Query `unlocked` gifts older than 365 days. Move to `expired` and trigger refund. |
+| `GET /api/v1/cron/reconcile`    | Hourly          | Query `funded` gifts older than 5 minutes (contract deployment should be near-instant). Retry deployment or escalate.                                       |
+| `GET /api/v1/cron/index-events` | Every 5 minutes | Fetch new Soroban events from RPC and persist to `contract_events` table.                                                                                   |
 
 All cron endpoints require `Authorization: Bearer <CRON_SECRET>` and are designed to be idempotent — running them multiple times produces the same outcome.
 
@@ -351,6 +340,7 @@ All cron endpoints require `Authorization: Bearer <CRON_SECRET>` and are designe
 The reconciliation cron (`GET /api/v1/cron/reconcile`) is the backstop for gifts that fall out of sync between the PostgreSQL database and the Stellar network.
 
 It handles:
+
 - `funded` gifts where contract deployment was never confirmed (retry or cancel)
 - `locked` gifts where the on-chain contract shows the funds have already been released (advance to `unlocked` or `claimed`)
 - Any gift where the database status conflicts with the contract state

@@ -186,3 +186,50 @@ load-test:
 - Stellar transaction submission latency varies by network congestion. The 3 s p95 threshold is calibrated for testnet; production mainnet may be faster.
 - Results JSON files in `load-tests/results/` are gitignored — they are uploaded as CI artifacts instead.
 - Re-run baseline tests after any RDS instance class change, pool size change, or App Runner concurrency adjustment.
+
+---
+
+## Cron Unlock Load Test (Issue #289)
+
+> **Script:** `load-tests/cron-unlock.k6.js`
+> **SLO:** p99 unlock time < 30 000 ms per gift
+
+### Scenario
+
+Simulates 1,000 concurrent cron invocations against `POST /api/cron/unlock-gifts`
+to model the Valentine's Day midnight scenario where thousands of gifts unlock simultaneously.
+
+```bash
+BASE_URL=http://localhost:3000 CRON_SECRET=<secret> \
+  k6 run load-tests/cron-unlock.k6.js \
+  --out json=load-tests/results/cron-unlock-$(date +%s).json
+```
+
+### Thresholds
+
+| Metric                        | Threshold     |
+| ----------------------------- | ------------- |
+| `cron_unlock_duration_ms` p99 | < 30 000 ms   |
+| `cron_unlock_duration_ms` p95 | < 20 000 ms   |
+| `cron_unlock_errors` rate     | < 5%          |
+| `http_req_failed` rate        | < 5%          |
+
+### Baseline Results (to be filled after first run)
+
+| Metric                    | Value |
+| ------------------------- | ----- |
+| Total requests            | —     |
+| p50 unlock time           | — ms  |
+| p95 unlock time           | — ms  |
+| p99 unlock time (SLO)     | — ms  |
+| Stellar TX p95            | — ms  |
+| DB write p95              | — ms  |
+| Error rate                | — %   |
+| Date                      | —     |
+| Environment               | —     |
+
+### Identified Bottlenecks
+
+> To be filled after baseline run. File follow-up issues for any p99 > 20 s or error rate > 1%.
+
+- [ ] TBD after first run against staging

@@ -10,6 +10,8 @@ export type AuditEventType =
   | "gift_cancelled"
   | "payment_failed"
   | "gift_refunded"
+  // Stellar submission idempotency (Issue #336)
+  | "stellar_tx_submission"
   // Data subject requests (Issue #145)
   | "data_export_requested"
   | "data_deletion_requested"

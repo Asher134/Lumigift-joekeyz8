@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { headers } from "next/headers";
 import Script from "next/script";
@@ -6,11 +6,13 @@ import "@/styles/globals.css";
 import "@/styles/components.css";
 import { Navbar } from "@/components/layout/Navbar";
 import { TestnetBanner } from "@/components/ui/TestnetBanner";
+import { ServiceWorkerRegister } from "@/components/ui/ServiceWorkerRegister";
 import { Providers } from "./providers";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "https://www.lumigift.com"),
   title: {
     default: "Lumigift — Time-Locked Cash Gifts on Stellar",
     template: "%s | Lumigift",
@@ -18,18 +20,32 @@ export const metadata: Metadata = {
   description:
     "Send cash gifts that stay hidden until a surprise unlock date. Powered by Stellar blockchain and USDC.",
   keywords: ["gifting", "stellar", "usdc", "blockchain", "nigeria", "surprise gift"],
+  applicationName: "Lumigift",
+  appleWebApp: { capable: true, title: "Lumigift", statusBarStyle: "black-translucent" },
   openGraph: {
     title: "Lumigift — Time-Locked Cash Gifts",
     description: "Send cash gifts that unlock on a surprise date.",
     url: "https://www.lumigift.com",
     siteName: "Lumigift",
     type: "website",
+    images: [
+      {
+        url: "/opengraph-image",
+        width: 1200,
+        height: 630,
+        alt: "Lumigift time-locked cash gifts",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Lumigift — Time-Locked Cash Gifts",
     description: "Send cash gifts that unlock on a surprise date.",
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#6366f1",
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -62,6 +78,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </a>
           <Navbar />
           <TestnetBanner />
+          <ServiceWorkerRegister />
           <main id="main-content">{children}</main>
         </Providers>
       </body>

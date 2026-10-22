@@ -1,0 +1,614 @@
+# Canary Deployment Workflow — Issue #296
+#
+# Implements a phased canary strategy for production deployments on Vercel:
+#
+#   Stage 1 — Canary (preview URL, ~5% traffic via feature flag / URL)
+#     • Deploy to a Vercel preview deployment (not yet promoted to production).
+#     • Run smoke tests against the preview URL.
+#     • Monitor Sentry error rate for 10 minutes.
+#     • Auto-rollback if Sentry error rate exceeds 2× the 7-day baseline.
+#
+#   Stage 2 — Manual promotion gate
+#     • Requires explicit approval from a "production" environment reviewer.
+#     • Reviewer inspects Sentry, monitors, and smoke test results before approving.
+#
+#   Stage 3 — Full promotion (100% traffic)
+#     • Promote the canary preview to Vercel production.
+#     • Run post-promotion smoke tests.
+#     • Auto-rollback on failure.
+#
+# Trigger: workflow_dispatch (manual) or tag push matching `v*-canary`.
+#
+# Required secrets/vars (same environment as deploy.yml):
+#   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+#   SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT
+#   SLACK_WEBHOOK_URL (optional — for Slack notifications)
+#   STELLAR_* (same as deploy.yml)
+#
+# Required GitHub environment: "production" (with required reviewers configured
+# for the promotion gate to work).
+
+name: Canary Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for canary deployment"
+        required: false
+        default: "Manual canary release"
+  push:
+    tags:
+      - "v*-canary"
+
+permissions:
+  contents: read
+  deployments: write
+
+# ── Shared build env ───────────────────────────────────────────────────────────
+env:
+  # Sentry error-rate thresholds
+  CANARY_MONITOR_MINUTES: "10"
+  # Auto-rollback if errors-per-minute exceed this multiple of baseline
+  CANARY_ERROR_MULTIPLIER: "2"
+
+jobs:
+  # ── 1. Verify environment ────────────────────────────────────────────────────
+  verify-environment:
+    name: Verify Mainnet Environment
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      network-ok: ${{ steps.gate.outputs.network-ok }}
+    steps:
+      - name: Verify deployment environment
+        id: gate
+        env:
+          STELLAR_NETWORK: ${{ vars.STELLAR_NETWORK }}
+          CONTRACT_ID: ${{ secrets.STELLAR_ESCROW_CONTRACT_ID }}
+          SERVER_SECRET: ${{ secrets.STELLAR_SERVER_SECRET_KEY }}
+        run: |
+          echo "=== Canary Deployment Safety Gate ==="
+          echo "Triggered by: $GITHUB_ACTOR"
+          echo "Ref:          $GITHUB_REF"
+          echo "SHA:          $GITHUB_SHA"
+          echo ""
+
+          FAIL=0
+
+          if [ "${STELLAR_NETWORK}" != "mainnet" ]; then
+            echo "❌ STELLAR_NETWORK='${STELLAR_NETWORK}', expected 'mainnet'"
+            FAIL=1
+          else
+            echo "✅ STELLAR_NETWORK=mainnet"
+          fi
+
+          if [ -z "${CONTRACT_ID}" ]; then
+            echo "❌ STELLAR_ESCROW_CONTRACT_ID not set"
+            FAIL=1
+          else
+            echo "✅ STELLAR_ESCROW_CONTRACT_ID set"
+          fi
+
+          if [ -z "${SERVER_SECRET}" ]; then
+            echo "❌ STELLAR_SERVER_SECRET_KEY not set"
+            FAIL=1
+          else
+            echo "✅ STELLAR_SERVER_SECRET_KEY set"
+          fi
+
+          if [[ ! "${SERVER_SECRET}" =~ ^S[A-Z2-7]{55}$ ]]; then
+            echo "❌ STELLAR_SERVER_SECRET_KEY format invalid"
+            FAIL=1
+          else
+            echo "✅ STELLAR_SERVER_SECRET_KEY format valid"
+          fi
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo "🚫 Canary blocked — fix issues above."
+            echo "network-ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "✅ All gates passed."
+          echo "network-ok=true" >> "$GITHUB_OUTPUT"
+
+  # ── 2. Build ─────────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [verify-environment]
+    if: needs.verify-environment.outputs.network-ok == 'true'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_APP_NAME: Lumigift
+          NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STELLAR_NETWORK: mainnet
+          STELLAR_HORIZON_URL: https://horizon.stellar.org
+          STELLAR_NETWORK_PASSPHRASE: "Public Global Stellar Network ; September 2015"
+          STELLAR_ESCROW_CONTRACT_ID: ${{ secrets.STELLAR_ESCROW_CONTRACT_ID }}
+          STELLAR_SERVER_SECRET_KEY: ${{ secrets.STELLAR_SERVER_SECRET_KEY }}
+          USDC_ISSUER: ${{ vars.USDC_ISSUER }}
+          USDC_ASSET_CODE: USDC
+          PAYSTACK_SECRET_KEY: ${{ secrets.PAYSTACK_SECRET_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          TERMII_API_KEY: ${{ secrets.TERMII_API_KEY }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Upload source maps to Sentry
+        run: npx @sentry/cli@2 releases files "${{ github.sha }}" upload-sourcemaps .next --url-prefix "~/_next" --rewrite
+        env:
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+  # ── 3. Canary deploy (preview URL — ~5% traffic) ──────────────────────────────
+  deploy-canary:
+    name: "Deploy Canary (Stage 1 — 5% traffic)"
+    runs-on: ubuntu-latest
+    needs: [build]
+    environment: production
+    outputs:
+      canary-url: ${{ steps.deploy-preview.outputs.preview-url }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build (canary)
+        run: npm run build
+        env:
+          NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_APP_NAME: Lumigift
+          NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STELLAR_NETWORK: mainnet
+          STELLAR_HORIZON_URL: https://horizon.stellar.org
+          STELLAR_NETWORK_PASSPHRASE: "Public Global Stellar Network ; September 2015"
+          STELLAR_ESCROW_CONTRACT_ID: ${{ secrets.STELLAR_ESCROW_CONTRACT_ID }}
+          STELLAR_SERVER_SECRET_KEY: ${{ secrets.STELLAR_SERVER_SECRET_KEY }}
+          USDC_ISSUER: ${{ vars.USDC_ISSUER }}
+          USDC_ASSET_CODE: USDC
+          PAYSTACK_SECRET_KEY: ${{ secrets.PAYSTACK_SECRET_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          TERMII_API_KEY: ${{ secrets.TERMII_API_KEY }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      # Deploy as a Vercel preview deployment (NOT promoted to --prod yet).
+      # This URL serves the canary build. Share it with internal testers or
+      # route ~5% of traffic via a feature flag / edge config entry.
+      - name: Deploy canary preview to Vercel
+        id: deploy-preview
+        uses: amondnet/vercel-action@9f74b3dd5db549fd4b35b62e18ce9c965cdfa1c3 # v2.3.0
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          # No --prod flag → preview deployment only
+
+      - name: Announce canary URL
+        run: |
+          echo "🐤 Canary deployed at: ${{ steps.deploy-preview.outputs.preview-url }}"
+          echo "   Monitoring for ${{ env.CANARY_MONITOR_MINUTES }} minutes before promotion gate."
+
+      - name: Notify Slack — canary deployed
+        if: env.SLACK_WEBHOOK != ''
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -s -X POST "${SLACK_WEBHOOK}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"text\": \"🐤 *Canary deployed* — monitoring before promotion\",
+              \"attachments\": [{
+                \"color\": \"warning\",
+                \"fields\": [
+                  {\"title\": \"Canary URL\", \"value\": \"${{ steps.deploy-preview.outputs.preview-url }}\", \"short\": false},
+                  {\"title\": \"Commit\",     \"value\": \"$GITHUB_SHA\", \"short\": true},
+                  {\"title\": \"Actor\",      \"value\": \"$GITHUB_ACTOR\", \"short\": true},
+                  {\"title\": \"Action\",     \"value\": \"<https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID|View Run>\", \"short\": false}
+                ]
+              }]
+            }"
+
+  # ── 4. Smoke-test canary ─────────────────────────────────────────────────────
+  smoke-canary:
+    name: "Smoke Tests (canary preview)"
+    runs-on: ubuntu-latest
+    needs: [deploy-canary]
+    outputs:
+      smoke-passed: ${{ steps.run-smoke.outputs.smoke-passed }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Wait for canary to propagate
+        run: sleep 15
+
+      - name: Run smoke tests against canary URL
+        id: run-smoke
+        env:
+          BASE_URL: ${{ needs.deploy-canary.outputs.canary-url }}
+        run: |
+          chmod +x scripts/smoke-test.sh
+          if bash scripts/smoke-test.sh; then
+            echo "smoke-passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "smoke-passed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Upload smoke test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-smoke-failure-${{ github.sha }}
+          path: /tmp/smoke_body.txt
+          retention-days: 7
+
+  # ── 5. Sentry error-rate monitor ─────────────────────────────────────────────
+  monitor-canary:
+    name: "Monitor Sentry Error Rate (10 min)"
+    runs-on: ubuntu-latest
+    needs: [smoke-canary]
+    if: needs.smoke-canary.outputs.smoke-passed == 'true'
+    outputs:
+      error-rate-ok: ${{ steps.check-sentry.outputs.error-rate-ok }}
+    steps:
+      - name: Monitor Sentry error rate
+        id: check-sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          MONITOR_MINUTES: ${{ env.CANARY_MONITOR_MINUTES }}
+          ERROR_MULTIPLIER: ${{ env.CANARY_ERROR_MULTIPLIER }}
+        run: |
+          echo "⏱  Monitoring Sentry for ${MONITOR_MINUTES} minutes..."
+          echo "   Auto-rollback threshold: ${ERROR_MULTIPLIER}× baseline error rate."
+          echo ""
+
+          # ── Fetch baseline (7-day rolling average) via Sentry Stats API ───────
+          # https://docs.sentry.io/api/stats/retrieve-event-counts-for-a-project/
+          BASELINE_START=$(date -u -d "7 days ago" +%Y-%m-%dT%H:%M:%S)
+          BASELINE_END=$(date -u -d "1 hour ago" +%Y-%m-%dT%H:%M:%S)
+
+          BASELINE_RESP=$(curl -sf \
+            "https://sentry.io/api/0/projects/${SENTRY_ORG}/${SENTRY_PROJECT}/stats/?stat=received&resolution=1d&since=${BASELINE_START}&until=${BASELINE_END}" \
+            -H "Authorization: Bearer ${SENTRY_AUTH_TOKEN}" \
+            2>/dev/null || echo "[]")
+
+          # Sum total events over baseline period
+          BASELINE_TOTAL=$(echo "${BASELINE_RESP}" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          total = sum(v for _, v in data) if isinstance(data, list) else 0
+          # Per-hour average
+          hours = max(len(data) * 24, 1)
+          print(int(total / hours))
+          " 2>/dev/null || echo "0")
+
+          echo "Baseline error rate: ~${BASELINE_TOTAL} events/hour"
+
+          THRESHOLD=$(( BASELINE_TOTAL * ERROR_MULTIPLIER ))
+          echo "Auto-rollback threshold: ${THRESHOLD} events/hour"
+
+          # ── Poll every 2 minutes for MONITOR_MINUTES ─────────────────────────
+          POLL_INTERVAL=120
+          POLLS=$(( (MONITOR_MINUTES * 60) / POLL_INTERVAL ))
+          ERROR_RATE_OK=true
+
+          for i in $(seq 1 "$POLLS"); do
+            sleep "$POLL_INTERVAL"
+
+            NOW=$(date -u +%Y-%m-%dT%H:%M:%S)
+            WINDOW_START=$(date -u -d "${POLL_INTERVAL} seconds ago" +%Y-%m-%dT%H:%M:%S)
+
+            CANARY_RESP=$(curl -sf \
+              "https://sentry.io/api/0/projects/${SENTRY_ORG}/${SENTRY_PROJECT}/stats/?stat=received&resolution=1h&since=${WINDOW_START}&until=${NOW}" \
+              -H "Authorization: Bearer ${SENTRY_AUTH_TOKEN}" \
+              2>/dev/null || echo "[]")
+
+            CURRENT_RATE=$(echo "${CANARY_RESP}" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          total = sum(v for _, v in data) if isinstance(data, list) else 0
+          print(total)
+          " 2>/dev/null || echo "0")
+
+            echo "  [poll $i/$POLLS] Current rate: ${CURRENT_RATE} events | Threshold: ${THRESHOLD}"
+
+            if [ "${CURRENT_RATE}" -gt "${THRESHOLD}" ] && [ "${THRESHOLD}" -gt 0 ]; then
+              echo "🚨 Error rate ${CURRENT_RATE} exceeds ${ERROR_MULTIPLIER}× baseline threshold (${THRESHOLD})!"
+              ERROR_RATE_OK=false
+              break
+            fi
+          done
+
+          if [ "$ERROR_RATE_OK" = "true" ]; then
+            echo "✅ Error rate within threshold for ${MONITOR_MINUTES} minutes."
+            echo "error-rate-ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "error-rate-ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+  # ── 6. Auto-rollback if canary error rate exceeded ────────────────────────────
+  auto-rollback-canary:
+    name: Auto-Rollback (canary failed)
+    runs-on: ubuntu-latest
+    needs: [monitor-canary, deploy-canary]
+    if: failure() && needs.monitor-canary.outputs.error-rate-ok == 'false'
+    steps:
+      - name: Notify Slack — canary rolling back
+        if: env.SLACK_WEBHOOK != ''
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -s -X POST "${SLACK_WEBHOOK}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"text\": \"🚨 *Canary auto-rollback triggered* — error rate exceeded ${CANARY_ERROR_MULTIPLIER}× baseline\",
+              \"attachments\": [{
+                \"color\": \"danger\",
+                \"fields\": [
+                  {\"title\": \"Canary URL\",  \"value\": \"${{ needs.deploy-canary.outputs.canary-url }}\", \"short\": false},
+                  {\"title\": \"Commit\",      \"value\": \"$GITHUB_SHA\", \"short\": true},
+                  {\"title\": \"Actor\",       \"value\": \"$GITHUB_ACTOR\", \"short\": true},
+                  {\"title\": \"Action\",      \"value\": \"<https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID|View Run>\", \"short\": false}
+                ]
+              }]
+            }"
+
+      - name: Mark canary as failed (no production traffic affected)
+        run: |
+          echo "🔴 Canary deployment FAILED — production was never promoted."
+          echo "   The canary preview URL is now abandoned."
+          echo "   Production remains on the last successful deployment."
+          echo ""
+          echo "   Canary URL (now abandoned): ${{ needs.deploy-canary.outputs.canary-url }}"
+          echo "   No manual rollback required — production was not touched."
+          exit 1
+
+  # ── 7. Manual promotion gate ──────────────────────────────────────────────────
+  promotion-gate:
+    name: "Manual Promotion Gate (25% → 100%)"
+    runs-on: ubuntu-latest
+    needs: [monitor-canary, deploy-canary]
+    if: needs.monitor-canary.outputs.error-rate-ok == 'true'
+    # This job requires a human reviewer to approve before promotion.
+    # Configure required reviewers in:
+    #   GitHub → Settings → Environments → production → Required reviewers
+    environment: production
+    outputs:
+      approved: ${{ steps.approval-record.outputs.approved }}
+    steps:
+      - name: Display canary health summary
+        run: |
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  ✅ CANARY HEALTH CHECK PASSED"
+          echo "═══════════════════════════════════════════════════════════"
+          echo ""
+          echo "  Canary URL : ${{ needs.deploy-canary.outputs.canary-url }}"
+          echo "  Commit     : $GITHUB_SHA"
+          echo "  Monitored  : ${{ env.CANARY_MONITOR_MINUTES }} minutes"
+          echo "  Threshold  : ${{ env.CANARY_ERROR_MULTIPLIER }}× baseline — NOT exceeded"
+          echo ""
+          echo "  ▶  Approve this job to promote the canary to 100% production traffic."
+          echo "  ✕  Reject this job to abandon the canary (production is unaffected)."
+          echo ""
+          echo "  Before approving, verify:"
+          echo "    • Sentry error rate: https://sentry.io/${SENTRY_ORG}/${SENTRY_PROJECT}/"
+          echo "    • Uptime monitors:   https://betteruptime.com/team/monitors"
+          echo "    • Canary preview:    ${{ needs.deploy-canary.outputs.canary-url }}"
+          echo "═══════════════════════════════════════════════════════════"
+        env:
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+
+      - name: Record approval
+        id: approval-record
+        run: |
+          echo "approved=true" >> "$GITHUB_OUTPUT"
+          echo "✅ Promotion approved by $GITHUB_ACTOR at $(date -u)."
+
+  # ── 8. Promote canary to production (100% traffic) ────────────────────────────
+  promote-to-production:
+    name: "Promote to Production (100% traffic)"
+    runs-on: ubuntu-latest
+    needs: [promotion-gate, deploy-canary]
+    if: needs.promotion-gate.outputs.approved == 'true'
+    environment: production
+    outputs:
+      production-url: ${{ steps.promote.outputs.preview-url }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build for production promotion
+        run: npm run build
+        env:
+          NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_APP_NAME: Lumigift
+          NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STELLAR_NETWORK: mainnet
+          STELLAR_HORIZON_URL: https://horizon.stellar.org
+          STELLAR_NETWORK_PASSPHRASE: "Public Global Stellar Network ; September 2015"
+          STELLAR_ESCROW_CONTRACT_ID: ${{ secrets.STELLAR_ESCROW_CONTRACT_ID }}
+          STELLAR_SERVER_SECRET_KEY: ${{ secrets.STELLAR_SERVER_SECRET_KEY }}
+          USDC_ISSUER: ${{ vars.USDC_ISSUER }}
+          USDC_ASSET_CODE: USDC
+          PAYSTACK_SECRET_KEY: ${{ secrets.PAYSTACK_SECRET_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          TERMII_API_KEY: ${{ secrets.TERMII_API_KEY }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      # Promote to Vercel production — 100% of traffic.
+      - name: Promote to Vercel production
+        id: promote
+        uses: amondnet/vercel-action@9f74b3dd5db549fd4b35b62e18ce9c965cdfa1c3 # v2.3.0
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: "--prod"
+
+      - name: Create Sentry release
+        run: |
+          npx @sentry/cli@2 releases new "$GITHUB_SHA"
+          npx @sentry/cli@2 releases set-commits "$GITHUB_SHA" --auto
+          npx @sentry/cli@2 releases finalize "$GITHUB_SHA"
+          npx @sentry/cli@2 releases deploys "$GITHUB_SHA" new -e production
+        env:
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Notify Slack — promoted to production
+        if: env.SLACK_WEBHOOK != ''
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -s -X POST "${SLACK_WEBHOOK}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"text\": \"✅ *Canary promoted to production (100%)* \",
+              \"attachments\": [{
+                \"color\": \"good\",
+                \"fields\": [
+                  {\"title\": \"Production URL\", \"value\": \"${{ steps.promote.outputs.preview-url }}\", \"short\": false},
+                  {\"title\": \"Commit\",         \"value\": \"$GITHUB_SHA\", \"short\": true},
+                  {\"title\": \"Approved by\",    \"value\": \"$GITHUB_ACTOR\", \"short\": true},
+                  {\"title\": \"Action\",         \"value\": \"<https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID|View Run>\", \"short\": false}
+                ]
+              }]
+            }"
+
+  # ── 9. Post-promotion smoke tests + rollback gate ────────────────────────────
+  smoke-production:
+    name: "Smoke Tests (post-promotion production)"
+    runs-on: ubuntu-latest
+    needs: [promote-to-production]
+    outputs:
+      smoke-passed: ${{ steps.run-smoke.outputs.smoke-passed }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Wait for production deployment to propagate
+        run: sleep 20
+
+      - name: Run smoke tests against production
+        id: run-smoke
+        env:
+          BASE_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+        run: |
+          chmod +x scripts/smoke-test.sh
+          if bash scripts/smoke-test.sh; then
+            echo "smoke-passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "smoke-passed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Upload smoke test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: post-promotion-smoke-failure-${{ github.sha }}
+          path: /tmp/smoke_body.txt
+          retention-days: 7
+
+  # ── 10. Rollback gate if post-promotion smoke fails ───────────────────────────
+  rollback-production:
+    name: Rollback Gate (post-promotion)
+    runs-on: ubuntu-latest
+    needs: [smoke-production]
+    if: failure() && needs.smoke-production.outputs.smoke-passed == 'false'
+    steps:
+      - name: Notify Slack — rollback required
+        if: env.SLACK_WEBHOOK != ''
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -s -X POST "${SLACK_WEBHOOK}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"text\": \"🚨 *Post-promotion smoke tests FAILED* — rollback required\",
+              \"attachments\": [{
+                \"color\": \"danger\",
+                \"fields\": [
+                  {\"title\": \"Commit\",  \"value\": \"$GITHUB_SHA\", \"short\": true},
+                  {\"title\": \"Actor\",   \"value\": \"$GITHUB_ACTOR\", \"short\": true},
+                  {\"title\": \"Action\",  \"value\": \"<https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID|View Run>\", \"short\": false}
+                ]
+              }]
+            }"
+
+      - name: Attempt automatic rollback via Vercel CLI
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+        run: |
+          echo "🔄 Post-promotion smoke tests failed — attempting automatic rollback..."
+          npm install -g vercel@latest --silent
+
+          if vercel rollback \
+              --token "${VERCEL_TOKEN}" \
+              --scope "${VERCEL_ORG_ID}" \
+              --yes \
+              2>&1; then
+            echo "✅ Automatic rollback succeeded."
+          else
+            echo "⚠️  Automatic rollback failed — manual intervention required."
+            echo ""
+            echo "Manual rollback steps:"
+            echo "  1. Go to https://vercel.com/dashboard → Lumigift → Deployments"
+            echo "  2. Find the last successful production deployment"
+            echo "  3. Click '...' → 'Promote to Production'"
+            exit 1
+          fi
