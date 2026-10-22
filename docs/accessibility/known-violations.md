@@ -19,6 +19,28 @@ the CI blocking check, along with justification and the ticket tracking the fix.
 
 ---
 
+## Route coverage (Issue #293)
+
+The following routes are now audited automatically by jest-axe (component level)
+and `@axe-core/playwright` (full-page E2E) in CI:
+
+| Route                 | jest-axe file                       | Playwright spec                 |
+| --------------------- | ----------------------------------- | ------------------------------- |
+| `/`                   | `accessibility.test.tsx`            | `e2e/accessibility-axe.spec.ts` |
+| `/send`               | `accessibility.test.tsx`            | `e2e/accessibility-axe.spec.ts` |
+| `/dashboard`          | `accessibility.test.tsx`            | `e2e/accessibility-axe.spec.ts` |
+| `/auth/login`         | `accessibility.test.tsx`            | `e2e/accessibility-axe.spec.ts` |
+| `/auth/register`      | `accessibility-routes.test.tsx`     | `e2e/accessibility-axe.spec.ts` |
+| `/help`               | `accessibility-routes.test.tsx`     | `e2e/accessibility-axe.spec.ts` |
+| `/notifications`      | `accessibility-all-routes.test.tsx` | `e2e/accessibility-axe.spec.ts` |
+| `/claim`              | `accessibility-all-routes.test.tsx` | `e2e/accessibility-axe.spec.ts` |
+| Navbar                | `accessibility-routes.test.tsx`     | —                               |
+| Button, Input, Dialog | `accessibility-routes.test.tsx`     | —                               |
+
+_Added 2026-10-20 — Issue #293_
+
+---
+
 > **Policy:** Any new critical or serious axe violation must either be fixed
 > before merging, or documented here with a justification and a linked ticket.
 > Violations with impact `moderate` or `minor` are logged but do not block CI.

@@ -8,6 +8,7 @@ import {
   hashPhone,
   redactGiftsForErasedSender,
 } from "./gift.service";
+import { getTransactionHistory } from "./transaction-history.service";
 import type { Gift, GiftStatus } from "@/types";
 
 /**
@@ -47,6 +48,7 @@ export interface DataExport {
   knownDevices: Record<string, unknown>[];
   giftsSent: Gift[];
   giftsReceived: Omit<Gift, "recipientPhoneHash" | "senderId">[];
+  transactions: Record<string, unknown>[];
   auditTrail: Record<string, unknown>[];
   dataSubjectRequests: Record<string, unknown>[];
 }
@@ -69,7 +71,7 @@ async function recordRequest(
  * discloses another person's identifiers.
  */
 export async function exportUserData(ctx: RequestContext): Promise<DataExport> {
-  const [profile, prefs, devices, audit, requests] = await Promise.all([
+  const [profile, prefs, devices, audit, requests, transactions] = await Promise.all([
     pool.query(
       "SELECT id, phone, name, role, created_at, updated_at FROM users WHERE id = $1 AND deleted_at IS NULL",
       [ctx.userId]
@@ -89,6 +91,9 @@ export async function exportUserData(ctx: RequestContext): Promise<DataExport> {
     pool.query(
       "SELECT request_type, status, reason, requested_at, completed_at FROM data_subject_requests WHERE user_id = $1 ORDER BY requested_at DESC",
       [ctx.userId]
+    ),
+    getTransactionHistory(ctx.userId, { limit: 100 }).then(
+      (page) => page.items
     ),
   ]);
 
@@ -113,6 +118,7 @@ export async function exportUserData(ctx: RequestContext): Promise<DataExport> {
     knownDevices: devices.rows,
     giftsSent,
     giftsReceived,
+    transactions,
     auditTrail: audit.rows,
     dataSubjectRequests: requests.rows,
   };

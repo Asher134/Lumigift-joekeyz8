@@ -31,6 +31,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+.kiro/
 
 # ── Testing ───────────────────────────────────────────────────────────────────
 
@@ -38,16 +39,15 @@ Thumbs.db
 coverage/
 .nyc_output/
 
-# Jest snapshot files — only auto-generated snapshots are excluded.
-# Intentionally committed snapshots (e.g. component tests) should be kept.
-# Auto-generated watch-mode / obsolete snapshots are excluded:
+# Test snapshots (auto-generated) — never commit watch-mode/obsolete snapshots.
+# Intentional baseline snapshots should be committed explicitly.
+**/__snapshots__/*.snap
 **/__snapshots__/*.snap.bak
 **/__snapshots__/*.snap.tmp
+contracts/escrow/test_snapshots/
 
 # Playwright test-result artifacts — screenshots, videos, traces.
 # These are uploaded as CI artifacts instead of being committed to the repo.
-# Issue #125: mobile viewport coverage artifacts
-# Issue #126: cross-browser E2E artifacts
 test-results/
 playwright-report/
 
@@ -56,8 +56,6 @@ playwright-report/
 # The lines below exclude only the auto-generated temp comparison files that
 # Playwright writes during a failed snapshot run (they end in -actual.png
 # or -diff.png) — NOT the committed baseline .png files.
-# If you want to exclude all snapshots uncomment the next line instead:
-# e2e/visual/__snapshots__/
 e2e/visual/__snapshots__/**/*-actual.png
 e2e/visual/__snapshots__/**/*-diff.png
 e2e/visual/__snapshots__/**/*-expected.png
@@ -75,7 +73,6 @@ jest-worker-*
 
 # ── Rust / Cargo ──────────────────────────────────────────────────────────────
 contracts/target/
-contracts/escrow/test_snapshots/
 
 # ── Misc ──────────────────────────────────────────────────────────────────────
 *.tsbuildinfo
@@ -101,12 +98,13 @@ load-tests/results/
 # Turbopack cache
 .next/cache/
 
-# ── Snapshots ─────────────────────────────────────────────────────────────────
-# Jest auto-generated snapshots from watch mode.
-# Intentional baseline snapshots should be committed explicitly.
-**/__snapshots__/*.snap
+# ── Vercel / deployment ───────────────────────────────────────────────────────
+.vercel
 
-# ── OS & editor artefacts ────────────────────────────────────────────────────
+# ── Turbo / monorepo cache ────────────────────────────────────────────────────
+.turbo
+
+# ── IDE / OS artefacts ────────────────────────────────────────────────────────
 ehthumbs.db
 Desktop.ini
 *.orig

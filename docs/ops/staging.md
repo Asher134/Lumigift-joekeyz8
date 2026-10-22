@@ -67,3 +67,46 @@ test("@smoke homepage loads", async ({ page }) => {
 
 Once staging is validated, merge `develop` → `main`. The production deploy workflow
 (`.github/workflows/deploy.yml`) will trigger automatically.
+
+---
+
+## Staging ↔ Production Parity Checks (Issue #294)
+
+An automated parity check runs on every push to `develop` and on a weekly
+schedule (Mondays 08:00 UTC). It is defined in
+`.github/workflows/staging-parity.yml`.
+
+### What is checked
+
+| Check              | What it does                                                                                                   |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Env-var key parity | Verifies every required secret/variable key from `.env.example` is present in the `staging` GitHub environment |
+| PR comment         | Posts a parity report as a comment on deploy-triggering PRs                                                    |
+| Weekly schedule    | Catches drift even without a deploy                                                                            |
+
+The check compares **keys only** — secret values are never read or logged.
+
+### What it does NOT check automatically
+
+- **DB schema drift** between staging and production: detected by running
+  migrations on both environments and comparing the output. This is a manual
+  step until a migration-diffing tool is integrated.
+- **Feature flag parity**: document any divergences in this file when they are
+  intentional.
+
+### When the parity check fails
+
+1. Go to **Settings → Environments → staging** in the GitHub repository.
+2. Add the missing secret or variable listed in the parity report.
+3. Re-run the failed workflow from the Actions tab.
+
+If a discrepancy is intentional (e.g. a staging-only override), document it in
+the table below.
+
+### Known intentional staging/production differences
+
+| Variable               | Staging value        | Production value | Reason                                   |
+| ---------------------- | -------------------- | ---------------- | ---------------------------------------- |
+| `STELLAR_NETWORK`      | `testnet`            | `mainnet`        | Staging uses testnet to avoid real money |
+| `NEXT_PUBLIC_APP_NAME` | `Lumigift (Staging)` | `Lumigift`       | Visual indicator in UI                   |
+| Stellar Horizon URL    | testnet endpoint     | mainnet endpoint | Follows network                          |

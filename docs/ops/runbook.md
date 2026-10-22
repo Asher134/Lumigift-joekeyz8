@@ -11,6 +11,7 @@ This runbook provides procedures for handling common production incidents in Lum
   - P2 (Medium): <4 hours
 - **Communication**: Update stakeholders via Slack #incidents channel
 - **Post-Mortem**: Conduct blameless post-mortem for all P0/P1 incidents
+- **Logs Dashboard**: Grafana Explore (Loki) at `${GRAFANA_URL}/explore` — see [Log Aggregation](#log-aggregation)
 
 ## Database Connection Failure
 
@@ -169,33 +170,78 @@ This runbook provides procedures for handling common production incidents in Lum
 - Expiry processing doesn't run
 - Application logs missing cron execution entries
 - Vercel cron dashboard shows failures
+- `cron.dead_letter` structured log entries or Redis keys `cron:dead-letter:*` present
 
 ### Diagnosis Steps
 
-1. Check Vercel cron job status and logs
-2. Verify cron schedule configuration
-3. Test cron endpoints manually: `curl https://lumigift.com/api/cron/unlock`
-4. Check for long-running cron jobs blocking new executions
-5. Verify database connectivity from cron functions
+1. Check Vercel cron job status and logs in the project dashboard.
+2. Verify cron schedule configuration in `vercel.json`.
+3. Check for `cron.dead_letter` error logs (structured field `metric=cron.dead_letter`).
+4. Inspect Redis dead-letter keys: `redis-cli keys "cron:dead-letter:*"`.
+5. Test cron endpoints manually (see Manual Re-Trigger below).
+6. Check for long-running cron jobs blocking new executions.
+7. Verify database connectivity from cron functions.
+
+### Manual Re-Trigger
+
+Each cron route is a standard `GET` endpoint protected by `CRON_SECRET`. Re-trigger
+any job with `curl`:
+
+```bash
+# Unlock — every minute
+curl -X GET "https://lumigift.app/api/v1/cron/unlock" \
+  -H "Authorization: Bearer $CRON_SECRET"
+
+# Expire — daily at 02:00 UTC
+curl -X GET "https://lumigift.app/api/v1/cron/expire" \
+  -H "Authorization: Bearer $CRON_SECRET"
+
+# Reconcile — every 6 hours
+curl -X GET "https://lumigift.app/api/v1/cron/reconcile" \
+  -H "Authorization: Bearer $CRON_SECRET"
+
+# Index events — every 5 minutes
+curl -X GET "https://lumigift.app/api/v1/cron/index-events" \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+A `200` response means the job completed. A `401` means `CRON_SECRET` is wrong or
+missing. A `500` means the job threw — check the `cron.run` / `cron.dead_letter`
+logs and Sentry for the error, then re-trigger after fixing the cause.
+
+Dead-letter payloads are retained in Redis for 7 days and can be inspected to
+identify which job failed and why:
+
+```bash
+redis-cli get "cron:dead-letter:cron/v1/unlock"
+```
 
 ### Resolution Steps
 
 1. **Cron Function Errors**:
-   - Fix code issues and redeploy
-   - Manually trigger missed unlocks via admin interface
+   - Fix code issues and redeploy.
+   - Re-trigger the missed job manually (above).
+   - Manually apply missed work via the admin interface if needed.
 
 2. **Schedule Issues**:
-   - Update cron expressions in Vercel dashboard
-   - Adjust timezone settings if needed
+   - Update cron expressions in `vercel.json` / Vercel dashboard.
+   - Adjust timezone settings if needed.
 
 3. **Timeout Issues**:
-   - Optimize cron job performance
-   - Split large jobs into batches
+   - Optimize cron job performance.
+   - Split large jobs into batches.
+
+4. **Dead-Letter Recovery**:
+   - Review the dead-letter payload in Redis/Sentry.
+   - Fix the underlying failure.
+   - Re-trigger the specific job manually via curl.
 
 ### Escalation Path
 
-- If manual intervention needed: Escalate to engineering lead
-- If cron system down: Contact Vercel support
+- If manual intervention needed: Escalate to engineering lead.
+- If cron system down: Contact Vercel support.
+- P0 (`unlock` missed > 5 min, `index-events` missed > 15 min): On-call engineer immediately.
+- P1 (`reconcile` missed > 12 h, `expire` missed > 48 h): Engineering lead.
 
 ## Application Performance Degradation
 
@@ -313,6 +359,11 @@ Lumigift Team
 _This runbook is reviewed quarterly and updated as systems evolve. Last reviewed: [Date]_
 
 ## Log Aggregation
+
+**Dashboard**: Grafana Explore (Loki) at `${GRAFANA_URL}/explore`. Logs are queryable by
+`requestId`, `userId`, `giftId` and `level`; the `LumigiftHighErrorRate` alert fires when
+the error rate exceeds 1% over 5 minutes. Setup, queries and retention:
+[log-aggregation.md](./log-aggregation.md).
 
 ### Overview
 
@@ -614,3 +665,79 @@ stellar contract invoke \
 | Double-transfer risk detected          | **STOP ALL OPERATIONS** — escalate to CTO                      |
 | Reconciliation mismatch > 10 gifts     | Engineering on-call — investigate event indexer                |
 | Stellar network outage                 | Monitor https://status.stellar.org/ — no action until restored |
+
+---
+
+## Chaos Engineering Tests (Issue #297)
+
+Lumigift runs a weekly chaos engineering suite that verifies the app degrades
+gracefully when Redis or Postgres becomes unavailable mid-request.
+
+### Infrastructure
+
+Chaos tests use [Toxiproxy](https://github.com/Shopify/toxiproxy) to proxy
+connections to Redis and Postgres. Toxiproxy lets the test runner inject
+failures (hard kill, timeout, latency) without restarting the real services.
+
+| Component           | Direct port | Toxiproxy port | Proxy name       |
+| ------------------- | ----------- | -------------- | ---------------- |
+| Postgres            | 5433        | 5434           | `chaos-postgres` |
+| Redis               | 6380        | 6381           | `chaos-redis`    |
+| Toxiproxy admin API | —           | 8474           | —                |
+
+### Running locally
+
+```bash
+# Start infrastructure
+docker compose -f chaos-tests/docker-compose.chaos.yml up -d
+
+# Run the full suite
+npm run chaos:test
+# Results written to chaos-results.json
+
+# Run individual suites
+CHAOS_MODE=1 npx jest chaos-tests/chaos-redis.test.ts --runInBand --forceExit
+CHAOS_MODE=1 npx jest chaos-tests/chaos-postgres.test.ts --runInBand --forceExit
+
+# Tear down
+docker compose -f chaos-tests/docker-compose.chaos.yml down
+```
+
+### CI schedule
+
+The chaos suite runs as a GitHub Actions optional step on a weekly schedule
+(Tuesdays, 06:00 UTC) via `.github/workflows/chaos-tests.yml`. It can also be
+triggered manually via the GitHub Actions UI (`workflow_dispatch`).
+
+Results are uploaded as CI artifacts and summarized in the GitHub step summary.
+
+### Redis failure policy (reference)
+
+The full Redis failure policy is documented in
+`docs/ops/redis-failure-policy.md`. Key rules tested by the chaos suite:
+
+| Operation                       | Expected behavior on Redis failure               |
+| ------------------------------- | ------------------------------------------------ |
+| OTP send (`/api/auth/send-otp`) | HTTP 503 — fail closed, no OTP delivered         |
+| OTP verification                | HTTP 503 — fail closed, no code accepted         |
+| Health check (`/api/health`)    | Returns response with `checks.redis: "degraded"` |
+
+### Postgres failure policy
+
+| Operation                           | Expected behavior on Postgres failure                                 |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| Any API read (e.g. `/api/v1/gifts`) | HTTP 503 or structured 500 — no stack trace in response               |
+| Health check                        | Returns response with `checks.database: "degraded"` (not a 500 crash) |
+| Recovery                            | Requests succeed within one connection-pool cycle after restore       |
+
+### Chaos test results log
+
+| Date                | Redis suite | Postgres suite | Notes                                  |
+| ------------------- | ----------- | -------------- | -------------------------------------- |
+| _First run pending_ | —           | —              | CI weekly job will populate this table |
+
+> **Policy:** If a chaos test fails in CI, create an incident issue and
+> investigate within the P2 response window (4 hours). Update this table with
+> the outcome once resolved.
+
+_Section added 2026-10-20 — Issue #297_

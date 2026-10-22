@@ -110,7 +110,7 @@ export default function PaymentStatusPage({ params }: Props) {
     return (
       <main className={styles.page}>
         <div className={styles.container}>
-          <p className={styles.loadingMsg} aria-live="polite" aria-busy="true">
+          <p className={styles.loadingMsg} aria-live="polite" aria-atomic="true" aria-busy="true">
             Checking payment status…
           </p>
         </div>
@@ -123,7 +123,7 @@ export default function PaymentStatusPage({ params }: Props) {
     return (
       <main className={styles.page}>
         <div className={styles.container}>
-          <p className={styles.errorMsg} role="alert">
+          <p className={styles.errorMsg} role="alert" aria-live="polite" aria-atomic="true">
             {fetchError ?? "An unexpected error occurred."}
           </p>
           <button className="btn btn--secondary" onClick={loadStatus}>

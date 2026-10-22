@@ -1,14 +1,19 @@
 "use client";
 
-import { useState, useId } from "react";
+import { useState, useId, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
+import {
+  browserSupportsWebAuthn,
+  startAuthentication,
+  startRegistration,
+} from "@simplewebauthn/browser";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useCsrf } from "@/hooks/useCsrf";
 import styles from "./page.module.css";
 
-type Step = "phone" | "otp";
+type Step = "phone" | "otp" | "passkey-offer";
 
 /**
  * Validates that a callbackUrl is safe (same origin, relative path only).
@@ -32,6 +37,13 @@ export default function LoginPage() {
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Detected after mount to avoid an SSR/client hydration mismatch
+  const [passkeySupported, setPasskeySupported] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPasskeySupported(browserSupportsWebAuthn());
+  }, []);
 
   // ── Resend countdown ────────────────────────────────────────────────────
   const [resendCountdown, setResendCountdown] = useState(0);
@@ -123,10 +135,66 @@ export default function LoginPage() {
         redirect: false,
       });
       if (result?.error) throw new Error("Invalid OTP. Please try again.");
+      // Offer passkey registration after a successful OTP login on supported devices
+      if (passkeySupported) {
+        setStep("passkey-offer");
+        return;
+      }
       // Redirect to the validated callbackUrl (or /dashboard as fallback)
       router.push(callbackUrl);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /** Sign in with a registered passkey; falls back to OTP when unavailable or it fails. */
+  const handlePasskeySignIn = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await csrfFetch("/api/v1/auth/webauthn/login/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error("No passkey found for this number. Use a one-time code.");
+      const response = await startAuthentication({ optionsJSON: json.data });
+      const result = await signIn("webauthn", {
+        phone,
+        response: JSON.stringify(response),
+        redirect: false,
+      });
+      if (result?.error) throw new Error("Biometric sign-in failed. Use a one-time code instead.");
+      router.push(callbackUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Biometric sign-in failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /** Register a passkey for the signed-in user, then continue to the app. */
+  const handleRegisterPasskey = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await csrfFetch("/api/v1/auth/webauthn/register/options", { method: "POST" });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+      const response = await startRegistration({ optionsJSON: json.data });
+      const verifyRes = await csrfFetch("/api/v1/auth/webauthn/register/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(response),
+      });
+      const verifyJson = await verifyRes.json();
+      if (!verifyJson.success) throw new Error(verifyJson.error);
+      router.push(callbackUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not enable biometric sign-in");
     } finally {
       setLoading(false);
     }
@@ -142,7 +210,9 @@ export default function LoginPage() {
   const stepLabel =
     step === "phone"
       ? "Step 1 of 2: Enter your phone number"
-      : "Step 2 of 2: Enter the verification code";
+      : step === "otp"
+        ? "Step 2 of 2: Enter the verification code"
+        : "Signed in. Optionally enable biometric sign-in";
 
   const attemptsRemaining = MAX_ATTEMPTS - attemptCount;
 
@@ -156,15 +226,39 @@ export default function LoginPage() {
           </p>
 
           <h1 className={styles.title}>
-            {step === "phone" ? "Sign in to Lumigift" : "Enter your OTP"}
+            {step === "phone"
+              ? "Sign in to Lumigift"
+              : step === "otp"
+                ? "Enter your OTP"
+                : "Enable biometric sign-in?"}
           </h1>
           <p className={styles.subtitle} id={`${statusId}-desc`}>
             {step === "phone"
               ? "Enter your phone number to receive a one-time code."
-              : `We sent a 6-digit code to ${phone}.`}
+              : step === "otp"
+                ? `We sent a 6-digit code to ${phone}.`
+                : "Use your fingerprint or Face ID next time instead of waiting for a code."}
           </p>
 
-          {step === "phone" ? (
+          {step === "passkey-offer" ? (
+            <div className={styles.form}>
+              {error && (
+                <p className={styles.error} role="alert">
+                  {error}
+                </p>
+              )}
+              <Button type="button" fullWidth loading={loading} onClick={handleRegisterPasskey}>
+                Enable biometric sign-in
+              </Button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm btn--full"
+                onClick={() => router.push(callbackUrl)}
+              >
+                Not now
+              </button>
+            </div>
+          ) : step === "phone" ? (
             <form
               onSubmit={handleSendOtp}
               className={styles.form}
@@ -186,6 +280,16 @@ export default function LoginPage() {
               <Button type="submit" fullWidth loading={loading}>
                 Send Code
               </Button>
+              {passkeySupported && (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm btn--full"
+                  onClick={handlePasskeySignIn}
+                  disabled={loading || !phone}
+                >
+                  Sign in with fingerprint / Face ID
+                </button>
+              )}
             </form>
           ) : (
             <form

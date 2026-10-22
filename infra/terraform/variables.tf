@@ -56,22 +56,31 @@ variable "ops_alert_email" {
   default     = "ops@lumigift.app"
 }
 
-# ─── Cost allocation tags ─────────────────────────────────────────────────────
+# ─── #335: Vercel variables ──────────────────────────────────────────────────
 
-variable "project" {
-  description = "Value for the `project` cost allocation tag"
+variable "vercel_team_id" {
+  description = "Vercel team ID or slug that owns the project"
+  type        = string
+}
+
+variable "vercel_project_name" {
+  description = "Vercel project name"
   type        = string
   default     = "lumigift"
 }
 
-variable "owner" {
-  description = "Value for the `owner` cost allocation tag (team responsible for the resources)"
+variable "vercel_git_repo" {
+  description = "GitHub repository linked to the Vercel project (owner/name)"
   type        = string
-  default     = "platform"
 }
 
-variable "cost_center" {
-  description = "Value for the `cost-center` cost allocation tag"
+variable "vercel_env_secret_id" {
+  description = "AWS Secrets Manager secret ID holding Vercel env var values as a JSON object"
   type        = string
-  default     = "lumigift-engineering"
+}
+
+variable "vercel_env_keys" {
+  description = "Environment variable keys managed on the Vercel project; values come from vercel_env_secret_id"
+  type        = list(string)
+  default     = []
 }

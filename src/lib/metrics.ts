@@ -23,6 +23,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { logger } from "@/lib/logger";
+import { getRedisClient } from "@/lib/redis";
 
 // ── Timer ─────────────────────────────────────────────────────────────────────
 
@@ -73,6 +74,54 @@ export function recordCronFailure(job: string, durationMs: number, err: unknown)
     scope.setExtra("durationMs", durationMs);
     Sentry.captureException(err);
   });
+}
+
+/**
+ * Records a failed cron job to a Redis dead-letter queue so it can be
+ * retried manually. Best-effort: if Redis is unavailable the dead-letter is
+ * skipped (the failure is still reported to Sentry via recordCronFailure).
+ *
+ * @param job         - Identifier for the cron job, e.g. "cron/unlock".
+ * @param durationMs  - Elapsed time in milliseconds before the failure.
+ * @param err         - The thrown error.
+ * @param recordCount - Number of records processed before the failure, if known.
+ */
+export async function recordDeadLetter(
+  job: string,
+  durationMs: number,
+  err: unknown,
+  recordCount?: number
+): Promise<void> {
+  const reason = err instanceof Error ? err.message : String(err);
+  const payload = {
+    job,
+    status: "dead-lettered",
+    durationMs,
+    reason,
+    failedAt: new Date().toISOString(),
+    ...(recordCount !== undefined ? { recordCount } : {}),
+  };
+
+  try {
+    const redis = await getRedisClient();
+    await redis.set(`cron:dead-letter:${job}`, JSON.stringify(payload), {
+      EX: 7 * 24 * 60 * 60,
+    });
+  } catch {
+    // Redis unavailable — dead-letter is best-effort.
+  }
+
+  logger.error(
+    {
+      metric: "cron.dead_letter",
+      job,
+      status: "dead-lettered",
+      durationMs,
+      reason,
+      ...(recordCount !== undefined ? { recordCount } : {}),
+    },
+    "[cron] dead-lettered"
+  );
 }
 
 // ── Webhook metrics ───────────────────────────────────────────────────────────
