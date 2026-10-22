@@ -1,5 +1,6 @@
 import axios from "axios";
 import { serverConfig } from "@/server/config";
+import { generateOtp, storeOtp } from "@/lib/otp";
 
 const termiiClient = axios.create({
   baseURL: "https://api.ng.termii.com/api",
@@ -43,7 +44,8 @@ export async function sendNewDeviceAlert(
  * @throws If the Termii API returns a non-2xx response.
  */
 export async function sendOtp(phone: string): Promise<string> {
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = generateOtp();
+  await storeOtp(phone, otp);
 
   await termiiClient.post("/sms/send", {
     to: phone,
@@ -53,7 +55,6 @@ export async function sendOtp(phone: string): Promise<string> {
     channel: "generic",
     api_key: serverConfig.termii.apiKey,
   });
-
   return otp;
 }
 
@@ -81,6 +82,34 @@ export async function sendGiftInvitation(
       `${senderName} sent you a gift on Lumigift! 🎁\n` +
       `Register to claim it: ${claimLink}\n` +
       `Valid for 30 days.`,
+    type: "plain",
+    channel: "generic",
+    api_key: serverConfig.termii.apiKey,
+  });
+}
+
+/**
+ * Reminds a recipient that their gift has expired but can still be claimed
+ * during the grace period before the escrow is refunded to the sender.
+ *
+ * @param phone - E.164-formatted destination phone number.
+ * @param amountUsdc - The gift amount in USDC.
+ * @param refundDueAt - When the grace period ends and the refund is processed.
+ * @returns Resolves when the SMS has been dispatched to Termii.
+ * @throws If the Termii API returns a non-2xx response.
+ */
+export async function sendExpiryGraceReminder(
+  phone: string,
+  amountUsdc: string,
+  refundDueAt: Date
+): Promise<void> {
+  await termiiClient.post("/sms/send", {
+    to: phone,
+    from: serverConfig.termii.senderId,
+    sms:
+      `Lumigift: Your ${amountUsdc} USDC gift has expired. 🎁\n` +
+      `Claim it before ${refundDueAt.toUTCString()} or it will be refunded to the sender: ` +
+      `${serverConfig.app.url}/claim`,
     type: "plain",
     channel: "generic",
     api_key: serverConfig.termii.apiKey,

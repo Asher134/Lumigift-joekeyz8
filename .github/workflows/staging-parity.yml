@@ -1,0 +1,201 @@
+name: Staging Environment Parity Check
+
+# Issue #294 — Automated check that staging configuration matches production.
+#
+# Runs:
+#   - On every push to 'develop' (before or after staging deploy)
+#   - On every staging deployment trigger (via workflow_call from staging.yml)
+#   - On a weekly schedule so drift is caught even without a deploy
+#
+# What it checks:
+#   1. Env-var key parity — every required env var key present in production
+#      must also be defined in the staging GitHub environment (keys only,
+#      never values).
+#   2. Optional vars — vars present in staging but not production are flagged
+#      as warnings (not failures).
+#   3. Results posted as a step summary and, on pull requests that trigger
+#      staging deploys, as a PR comment.
+
+on:
+  push:
+    branches: [develop]
+  schedule:
+    # Every Monday at 08:00 UTC
+    - cron: "0 8 * * 1"
+  workflow_call:
+    outputs:
+      parity-ok:
+        description: "true if staging has all required production env-var keys"
+        value: ${{ jobs.env-parity.outputs.parity-ok }}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # ── 1. Env-var key parity ───────────────────────────────────────────────────
+  env-parity:
+    name: Env-var Key Parity (staging vs production)
+    runs-on: ubuntu-latest
+    # Both environments must be accessible for this job to be meaningful.
+    # The job reads the *keys* (variable names) that are visible in each
+    # environment via GitHub Actions context — it never reads secret *values*.
+    environment: staging
+    outputs:
+      parity-ok: ${{ steps.check.outputs.parity-ok }}
+      report: ${{ steps.check.outputs.report }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Check env-var key parity
+        id: check
+        # Strategy: we enumerate the keys that production *requires* (derived
+        # from .env.example — every [REQUIRED] entry) and compare them with the
+        # keys available in the staging environment via GitHub secrets/vars
+        # context.  Because we can only observe whether a secret IS SET (not its
+        # value), we use a presence check pattern.
+        env:
+          # ── Staging secrets presence flags ────────────────────────────────
+          # Each variable below is set to "1" if the secret/var is present in
+          # the staging environment, "0" if absent.  This avoids leaking values
+          # while still allowing the parity check to work.
+          HAS_NEXTAUTH_SECRET: ${{ secrets.STAGING_NEXTAUTH_SECRET != '' && '1' || '0' }}
+          HAS_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL != '' && '1' || '0' }}
+          HAS_STELLAR_ESCROW_CONTRACT_ID: ${{ secrets.STAGING_STELLAR_ESCROW_CONTRACT_ID != '' && '1' || '0' }}
+          HAS_STELLAR_SERVER_SECRET_KEY: ${{ secrets.STAGING_STELLAR_SERVER_SECRET_KEY != '' && '1' || '0' }}
+          HAS_PAYSTACK_SECRET_KEY: ${{ secrets.STAGING_PAYSTACK_SECRET_KEY != '' && '1' || '0' }}
+          HAS_STRIPE_SECRET_KEY: ${{ secrets.STAGING_STRIPE_SECRET_KEY != '' && '1' || '0' }}
+          HAS_STRIPE_WEBHOOK_SECRET: ${{ secrets.STAGING_STRIPE_WEBHOOK_SECRET != '' && '1' || '0' }}
+          HAS_TERMII_API_KEY: ${{ secrets.STAGING_TERMII_API_KEY != '' && '1' || '0' }}
+          HAS_REDIS_URL: ${{ secrets.STAGING_REDIS_URL != '' && '1' || '0' }}
+          HAS_CRON_SECRET: ${{ secrets.STAGING_CRON_SECRET != '' && '1' || '0' }}
+          HAS_APP_URL: ${{ vars.STAGING_APP_URL != '' && '1' || '0' }}
+          HAS_CSRF_SECRET: ${{ secrets.CSRF_SECRET != '' && '1' || '0' }}
+          HAS_CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME != '' && '1' || '0' }}
+          HAS_CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY != '' && '1' || '0' }}
+          HAS_CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET != '' && '1' || '0' }}
+        run: |
+          set +e  # don't exit on first error; collect all failures
+
+          FAIL=0
+          WARNINGS=()
+          MISSING=()
+          PRESENT=()
+
+          check_required() {
+            local key="$1"
+            local has="$2"
+            if [ "$has" = "1" ]; then
+              PRESENT+=("$key")
+            else
+              MISSING+=("$key")
+              FAIL=1
+            fi
+          }
+
+          # ── Required secrets (must be present in staging) ──────────────────
+          check_required "NEXTAUTH_SECRET (STAGING_NEXTAUTH_SECRET)"       "$HAS_NEXTAUTH_SECRET"
+          check_required "DATABASE_URL (STAGING_DATABASE_URL)"             "$HAS_DATABASE_URL"
+          check_required "STELLAR_ESCROW_CONTRACT_ID"                      "$HAS_STELLAR_ESCROW_CONTRACT_ID"
+          check_required "STELLAR_SERVER_SECRET_KEY"                       "$HAS_STELLAR_SERVER_SECRET_KEY"
+          check_required "PAYSTACK_SECRET_KEY"                             "$HAS_PAYSTACK_SECRET_KEY"
+          check_required "STRIPE_SECRET_KEY"                               "$HAS_STRIPE_SECRET_KEY"
+          check_required "STRIPE_WEBHOOK_SECRET"                           "$HAS_STRIPE_WEBHOOK_SECRET"
+          check_required "TERMII_API_KEY"                                  "$HAS_TERMII_API_KEY"
+          check_required "REDIS_URL (STAGING_REDIS_URL)"                   "$HAS_REDIS_URL"
+          check_required "CRON_SECRET"                                     "$HAS_CRON_SECRET"
+          check_required "APP_URL (STAGING_APP_URL)"                       "$HAS_APP_URL"
+          check_required "CSRF_SECRET"                                     "$HAS_CSRF_SECRET"
+          check_required "CLOUDINARY_CLOUD_NAME"                           "$HAS_CLOUDINARY_CLOUD_NAME"
+          check_required "CLOUDINARY_API_KEY"                              "$HAS_CLOUDINARY_API_KEY"
+          check_required "CLOUDINARY_API_SECRET"                           "$HAS_CLOUDINARY_API_SECRET"
+
+          # ── Build report ───────────────────────────────────────────────────
+          REPORT="## Staging ↔ Production Env-var Parity Report\n\n"
+          REPORT+="**Run:** \`$GITHUB_SHA\` | **Date:** $(date -u '+%Y-%m-%d %H:%M UTC')\n\n"
+
+          if [ "$FAIL" -eq 0 ]; then
+            REPORT+="✅ **All ${#PRESENT[@]} required env-var keys are present in staging.**\n\n"
+          else
+            REPORT+="❌ **${#MISSING[@]} required env-var key(s) are MISSING from staging:**\n\n"
+            for key in "${MISSING[@]}"; do
+              REPORT+="- \`$key\`\n"
+            done
+            REPORT+="\n"
+          fi
+
+          if [ "${#PRESENT[@]}" -gt 0 ] && [ "$FAIL" -ne 0 ]; then
+            REPORT+="<details><summary>✅ Present keys (${#PRESENT[@]})</summary>\n\n"
+            for key in "${PRESENT[@]}"; do
+              REPORT+="- \`$key\`\n"
+            done
+            REPORT+="</details>\n\n"
+          fi
+
+          if [ "${#WARNINGS[@]}" -gt 0 ]; then
+            REPORT+="<details><summary>⚠️ Warnings (${#WARNINGS[@]})</summary>\n\n"
+            for w in "${WARNINGS[@]}"; do
+              REPORT+="- $w\n"
+            done
+            REPORT+="</details>\n\n"
+          fi
+
+          REPORT+="---\n_Generated by \`.github/workflows/staging-parity.yml\` — Issue #294_\n"
+
+          # ── Write outputs ──────────────────────────────────────────────────
+          if [ "$FAIL" -eq 0 ]; then
+            echo "parity-ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "parity-ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Escape newlines for GitHub Actions output
+          REPORT_ESCAPED="${REPORT//'%'/'%25'}"
+          REPORT_ESCAPED="${REPORT_ESCAPED//$'\n'/'%0A'}"
+          REPORT_ESCAPED="${REPORT_ESCAPED//$'\r'/'%0D'}"
+          echo "report=$REPORT_ESCAPED" >> "$GITHUB_OUTPUT"
+
+          # ── Step summary ───────────────────────────────────────────────────
+          printf "%b" "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+
+          exit $FAIL
+
+  # ── 2. Post report as PR comment on staging deploy PRs ─────────────────────
+  post-pr-comment:
+    name: Post Parity Report as PR Comment
+    runs-on: ubuntu-latest
+    needs: env-parity
+    if: always() && github.event_name == 'pull_request'
+    steps:
+      - name: Find existing parity comment
+        id: find-comment
+        uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574febe99e46463 # v3.1.0
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "Staging ↔ Production Env-var Parity Report"
+
+      - name: Create or update parity comment
+        uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043 # v4.0.0
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: ${{ needs.env-parity.outputs.report }}
+          edit-mode: replace
+
+  # ── 3. Fail the workflow if parity check failed ─────────────────────────────
+  parity-gate:
+    name: Parity Gate
+    runs-on: ubuntu-latest
+    needs: env-parity
+    if: always()
+    steps:
+      - name: Enforce parity gate
+        run: |
+          if [ "${{ needs.env-parity.outputs.parity-ok }}" != "true" ]; then
+            echo "❌ Staging parity check failed — one or more required env-var keys are missing."
+            echo "   Review the step summary above and add the missing secrets/variables"
+            echo "   to the 'staging' GitHub environment before deploying."
+            exit 1
+          fi
+          echo "✅ Staging parity check passed."

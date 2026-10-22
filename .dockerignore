@@ -3,89 +3,105 @@ node_modules
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-package-lock.json
+pnpm-debug.log*
 
-# Testing
+# Testing & Coverage
 coverage
 .nyc_output
 *.lcov
+test-results
+playwright-report
+.stryker-tmp
 
-# Next.js
+# Next.js Build Outputs
 .next
 out
 build
 dist
+*.tsbuildinfo
 
-# Production
+# Hosting Providers
 .vercel
 .netlify
 
-# Environment files
+# Environment & Secret Files (Strictly Excluded)
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
 .env*.local
+*.env
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+*.secret
+id_rsa*
+id_ed25519*
+credentials.json
+service-account*.json
+*.keystore
 
-# IDE
+# IDE & OS Files
 .vscode
 .idea
 *.swp
 *.swo
 *~
 .DS_Store
+Thumbs.db
 
-# Git
+# Git & Repository Metadata
 .git
 .gitignore
 .gitattributes
 .github
 
-# Documentation
-README.md
-CONTRIBUTING.md
-CODE_OF_CONDUCT.md
-SECURITY.md
-LICENSE
-LICENSE-POLICY.md
-docs
-
-# CI/CD
+# CI / Tooling Configs
 .husky
-.eslintrc.json
-.prettierrc
+.eslintrc*
+eslint.config.*
+.prettierrc*
 .gitleaks.toml
 .nsprc
 codecov.yml
+typedoc.json
+stryker.config.*
+vercel.json
 
-# Testing
+# Test Suites & Specs
 e2e
 load-tests
-jest.config.js
-jest.setup.ts
-playwright.config.ts
-playwright.visual.config.ts
+jest.config.*
+jest.setup.*
+playwright.config.*
+playwright.visual.config.*
 **/*.test.ts
 **/*.test.tsx
 **/*.spec.ts
 **/*.spec.tsx
 **/__tests__
 
-# Rust/Contract artifacts
+# Rust / Smart Contract Source & Artifacts
 contracts/target
 contracts/**/*.wasm
 contracts/**/*.so
+contracts/**/*.rs
+contracts/Cargo.*
 .cargo
+rust-toolchain.toml
 
-# Terraform
+# Infrastructure & Docs
 infra
+docs
+*.md
+LICENSE*
 
-# Logs
+# Logs & Temporary Files
 logs
 *.log
-
-# Temporary files
 tmp
 temp
 *.tmp
+.cache
+

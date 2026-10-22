@@ -1,22 +1,42 @@
 /**
- * POST /api/v1/cron/reconcile
+ * GET /api/v1/cron/reconcile
  *
- * Called by Vercel Cron (or an external scheduler) every 15 minutes to poll
- * Paystack for gifts whose webhooks were missed.
+ * Called by Vercel Cron every 6 hours to poll Paystack for gifts whose
+ * webhooks were missed, and to surface dead-lettered gifts.
  *
  * Security: protected by CRON_SECRET bearer token (same pattern as other cron routes).
+ *
+ * Dead-man's-switch: pings HEALTHCHECK_URL_RECONCILE (or HEALTHCHECK_URL) on
+ * success so operators are alerted when the cron stops firing.
  */
 import { NextRequest, NextResponse } from "next/server";
 import {
   reconcilePendingPayments,
   getDeadLetteredGiftIds,
 } from "@/server/services/payment-reconciliation.service";
+import {
+  recordCronSuccess,
+  recordCronFailure,
+  recordDeadLetter,
+} from "@/lib/metrics";
 import type { ApiResponse } from "@/types";
 import type { ReconcileResult } from "@/server/services/payment-reconciliation.service";
+import { isAuthorizedCronRequest } from "@/server/cron-auth";
+
+/** Ping a dead-man's-switch URL (e.g. Healthchecks.io / BetterUptime). */
+async function pingHealthcheck(suffix = "") {
+  const url = process.env.HEALTHCHECK_URL_RECONCILE ?? process.env.HEALTHCHECK_URL;
+  if (!url) return;
+  try {
+    await fetch(`${url}${suffix}`, { method: "GET" });
+  } catch (err) {
+    console.error("[cron/reconcile] healthcheck ping failed", err);
+  }
+}
 
 export const GET = async (req: NextRequest) => {
   const authHeader = req.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCronRequest(authHeader)) {
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: "Unauthorized" },
       { status: 401 }
@@ -24,20 +44,40 @@ export const GET = async (req: NextRequest) => {
   }
 
   const startedAt = Date.now();
+  console.log("[cron/reconcile] run started", { startedAt: new Date(startedAt).toISOString() });
 
-  const result = await reconcilePendingPayments();
-  const deadLettered = await getDeadLetteredGiftIds();
+  try {
+    const result = await reconcilePendingPayments();
+    const deadLettered = await getDeadLetteredGiftIds();
+    const durationMs = Date.now() - startedAt;
 
-  const durationMs = Date.now() - startedAt;
-
-  return NextResponse.json<
-    ApiResponse<ReconcileResult & { durationMs: number; deadLetteredTotal: number }>
-  >({
-    success: true,
-    data: {
+    console.log("[cron/reconcile] run complete", {
       ...result,
       durationMs,
       deadLetteredTotal: deadLettered.length,
-    },
-  });
+    });
+
+    await pingHealthcheck(); // success ping
+
+    return NextResponse.json<
+      ApiResponse<ReconcileResult & { durationMs: number; deadLetteredTotal: number }>
+    >({
+      success: true,
+      data: {
+        ...result,
+        durationMs,
+        deadLetteredTotal: deadLettered.length,
+      },
+    });
+  } catch (err) {
+    const durationMs = Date.now() - startedAt;
+    console.error("[cron/reconcile] run failed", err);
+    recordCronFailure("cron/v1/reconcile", durationMs, err);
+    await recordDeadLetter("cron/v1/reconcile", durationMs, err);
+    await pingHealthcheck("/fail"); // failure ping
+    return NextResponse.json<ApiResponse<never>>(
+      { success: false, error: "Reconciliation job failed" },
+      { status: 500 }
+    );
+  }
 };

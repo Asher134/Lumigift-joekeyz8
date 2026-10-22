@@ -1,18 +1,20 @@
 /**
- * useGiftDraft — persists non-sensitive draft fields to sessionStorage
- * so the gift wizard can recover its state after an accidental page refresh.
+ * useGiftDraft — persists non-sensitive draft fields to localStorage
+ * so the gift wizard can recover its state after an accidental page refresh
+ * and so draft state stays in sync across open browser tabs.
  *
  * Security rules (issue #33):
  *   - Payment secrets and OTPs are NEVER stored.
  *   - Raw recipient phone numbers are NEVER stored (only name, email, message,
  *     amount, unlock date, and the current wizard step).
- *   - sessionStorage is used instead of localStorage: data is scoped to the
- *     browser tab and cleared automatically when the tab is closed.
+ *   - localStorage is shared across tabs of the same origin, so a `storage`
+ *     event listener keeps every open tab's draft in sync.
  *
- * The hook returns a tuple of [draft, saveDraft, clearDraft].
+ * The hook returns `{ draft, readDraft, saveDraft, clearDraft }`. `draft` is
+ * reactive: it updates whenever localStorage changes (e.g. from another tab).
  */
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const STORAGE_KEY = "lumigift_gift_draft_v1";
 
@@ -44,16 +46,47 @@ function safeParse(raw: string | null): GiftDraft | null {
   }
 }
 
+/** Deep-equality check for drafts so we do not re-render on no-op storage events. */
+function draftEqual(a: GiftDraft | null, b: GiftDraft | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export function useGiftDraft() {
-  const readDraft = useCallback((): GiftDraft | null => {
-    if (typeof window === "undefined") return null;
-    return safeParse(sessionStorage.getItem(STORAGE_KEY));
+  const [draft, setDraft] = useState<GiftDraft | null>(null);
+
+  // Initialise from localStorage on mount so a refresh restores the draft.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setDraft(safeParse(localStorage.getItem(STORAGE_KEY)));
   }, []);
 
-  const saveDraft = useCallback((draft: GiftDraft) => {
+  // Sync draft state across tabs: when another tab writes to localStorage the
+  // `storage` event fires here, and we adopt the new value.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key !== STORAGE_KEY) return;
+      const next = safeParse(e.newValue);
+      // Only re-render when the value actually changed — prevents loops.
+      if (!draftEqual(draft, next)) {
+        setDraft(next);
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [draft]);
+
+  const readDraft = useCallback((): GiftDraft | null => draft, [draft]);
+
+  const saveDraft = useCallback((nextDraft: GiftDraft) => {
     if (typeof window === "undefined") return;
     try {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextDraft));
+      setDraft(nextDraft);
     } catch {
       // Quota exceeded or private-browsing restriction — fail silently
     }
@@ -61,8 +94,9 @@ export function useGiftDraft() {
 
   const clearDraft = useCallback(() => {
     if (typeof window === "undefined") return;
-    sessionStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(STORAGE_KEY);
+    setDraft(null);
   }, []);
 
-  return { readDraft, saveDraft, clearDraft };
+  return { draft, readDraft, saveDraft, clearDraft };
 }

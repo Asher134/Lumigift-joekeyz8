@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Gift, GiftStatus } from "@/types";
+import type { Gift, GiftStatus, RefundStatus } from "@/types";
 import { GiftStatusBadge } from "@/components/ui/GiftStatusBadge";
 import { formatNGN } from "@/lib/currency";
 import { formatUnlockDate } from "@/lib/dateFormat";
+import { giftThemeStyle } from "@/lib/giftThemes";
 import { ClaimButton } from "./ClaimButton";
 import { ShareGift } from "./ShareGift";
+import { CancelGiftButton, RefundStatusNotice } from "./CancelGiftButton";
 import styles from "./GiftCard.module.css";
 
 interface GiftCardProps {
@@ -26,7 +28,9 @@ function explorerUrl(txHash: string) {
 export function GiftCard({ gift, perspective, recipientStellarKey }: GiftCardProps) {
   const router = useRouter();
   const [status, setStatus] = useState<GiftStatus>(gift.status);
+  const [refundStatus, setRefundStatus] = useState<RefundStatus | undefined>(gift.refundStatus);
   const isLocked = status === "locked";
+  const themeStyle = giftThemeStyle(gift.themeId);
   const name = perspective === "sender" ? `To: ${gift.recipientName}` : "A gift for you";
 
   const amountLabel =
@@ -49,7 +53,8 @@ export function GiftCard({ gift, perspective, recipientStellarKey }: GiftCardPro
 
   return (
     <article
-      className={styles.card}
+      className={themeStyle ? `${styles.card} gift-theme` : styles.card}
+      style={themeStyle}
       tabIndex={0}
       role="button"
       aria-label={cardLabel}
@@ -99,6 +104,7 @@ export function GiftCard({ gift, perspective, recipientStellarKey }: GiftCardPro
             giftId={gift.id}
             recipientStellarKey={recipientStellarKey}
             onStatusChange={setStatus}
+            themeId={gift.themeId}
           />
         </div>
       )}
@@ -106,6 +112,25 @@ export function GiftCard({ gift, perspective, recipientStellarKey }: GiftCardPro
       {perspective === "sender" && (status === "locked" || status === "funded") && (
         <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
           <ShareGift giftId={gift.id} recipientName={gift.recipientName} />
+        </div>
+      )}
+
+      {perspective === "sender" &&
+        ["draft", "pending_payment", "funded", "locked", "unlocked"].includes(status) && (
+          <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <CancelGiftButton
+              giftId={gift.id}
+              onCancelled={(cancelled) => {
+                setStatus(cancelled.status);
+                setRefundStatus(cancelled.refundStatus);
+              }}
+            />
+          </div>
+        )}
+
+      {perspective === "sender" && status === "cancelled" && refundStatus && (
+        <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+          <RefundStatusNotice status={refundStatus} />
         </div>
       )}
     </article>

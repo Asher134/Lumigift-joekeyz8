@@ -5,6 +5,7 @@ Thank you for your interest in contributing! Lumigift is an open-source project 
 ## Table of Contents
 
 - [Code of Conduct](#code-of-conduct)
+- [Onboarding Video Walkthrough](#onboarding-video-walkthrough)
 - [Getting Started](#getting-started)
 - [Development Workflow](#development-workflow)
 - [Project Structure](#project-structure)
@@ -19,6 +20,30 @@ Thank you for your interest in contributing! Lumigift is an open-source project 
 ## Code of Conduct
 
 This project follows our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you agree to uphold it.
+
+---
+
+## Onboarding Video Walkthrough
+
+> 🎬 **New to Lumigift?** Watch the contributor onboarding video before diving into the text below.
+
+A screen-recorded walkthrough is available to help first-time contributors get up and running quickly. The video covers the full path from cloning the repo to opening your first PR:
+
+| Step | What is covered |
+| ---- | --------------- |
+| 1    | Fork & clone the repository |
+| 2    | Docker environment setup    |
+| 3    | Running the test suite      |
+| 4    | Creating and submitting a PR |
+
+**Watch the walkthrough:**
+
+- 🎥 **YouTube:** _[Lumigift Contributor Onboarding Walkthrough](https://www.youtube.com/watch?v=PLACEHOLDER)_ *(link will be updated once the video is published)*
+- 🎥 **Loom (mirror):** _[Lumigift Contributor Onboarding — Loom](https://www.loom.com/share/PLACEHOLDER)_ *(link will be updated once the video is published)*
+
+> **Accessibility:** The video will include closed captions and a full transcript. Once published, the transcript will be available at [`docs/contributor-onboarding-transcript.md`](docs/contributor-onboarding-transcript.md).
+
+> **Keeping it current:** The video and transcript are reviewed and re-recorded whenever the setup steps change significantly (e.g. Node.js major version bumps, Docker Compose config changes). If you notice the video is out of date, please open an issue or PR.
 
 ---
 

@@ -100,6 +100,10 @@ npm run docker:up:dev      # Start development
 npm run docker:down        # Stop services
 npm run docker:build       # Rebuild images
 npm run docker:logs        # View logs
+npm run docker:lint        # Lint Dockerfile (hadolint)
+npm run docker:scan        # Scan image vulnerabilities (trivy)
+npm run docker:sbom        # Generate SPDX/CycloneDX SBOM (syft)
+npm run docker:check       # Run full security & compliance check
 ```
 
 ## Troubleshooting

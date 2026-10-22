@@ -1,14 +1,21 @@
 # Uptime Monitoring
 
-This document describes the uptime monitoring setup for Lumigift's critical endpoints and infrastructure.
+> **Status page**: https://status.lumigift.app
+>
+> This document describes the uptime monitoring setup for Lumigift's critical endpoints and infrastructure.
+> Monitoring is provisioned via **BetterUptime** and covers `/api/health`, `/api/health/ready`, and external
+> Stellar dependencies. Alerts fire on **2 consecutive failures** via email and Slack.
+
+<!-- Closes #300 -->
 
 ## Monitored Endpoints
 
-| Endpoint                                    | Check Interval | Alert Threshold        |
-| ------------------------------------------- | -------------- | ---------------------- |
-| `GET /api/health`                           | 1 minute       | 2 consecutive failures |
-| Stellar Horizon API (`STELLAR_HORIZON_URL`) | 1 minute       | 2 consecutive failures |
-| Soroban RPC (`STELLAR_RPC_URL`)             | 5 minutes      | 2 consecutive failures |
+| Endpoint                                    | Check Interval  | Alert Threshold        |
+| ------------------------------------------- | --------------- | ---------------------- |
+| `GET /api/health`                           | 1 minute (60 s) | 2 consecutive failures |
+| `GET /api/health/ready`                     | 1 minute (60 s) | 2 consecutive failures |
+| Stellar Horizon API (`STELLAR_HORIZON_URL`) | 1 minute        | 2 consecutive failures |
+| Soroban RPC (`STELLAR_RPC_URL`)             | 5 minutes       | 2 consecutive failures |
 
 ## Setup: BetterUptime (Recommended)
 
@@ -18,16 +25,26 @@ This document describes the uptime monitoring setup for Lumigift's critical endp
 
 Log in to BetterUptime and create the following monitors:
 
-**Monitor 1 — App Health**
+**Monitor 1 — App Liveness (`/api/health`)**
 
 - URL: `https://<your-domain>/api/health`
 - Method: `GET`
-- Check frequency: **1 minute**
+- Check frequency: **60 seconds**
 - Expected status: `200`
 - Expected response body contains: `"status":"ok"`
 - Alert after: **2 consecutive failures**
+- Alert via: **Email** + **Slack** (`#incidents`)
 
-**Monitor 2 — Stellar Horizon**
+**Monitor 2 — App Readiness (`/api/health/ready`)**
+
+- URL: `https://<your-domain>/api/health/ready`
+- Method: `GET`
+- Check frequency: **60 seconds**
+- Expected status: `200`
+- Alert after: **2 consecutive failures**
+- Alert via: **Email** + **Slack** (`#incidents`)
+
+**Monitor 3 — Stellar Horizon**
 
 - URL: `https://horizon.stellar.org/` (mainnet) or `https://horizon-testnet.stellar.org/` (testnet)
 - Method: `GET`
@@ -35,7 +52,7 @@ Log in to BetterUptime and create the following monitors:
 - Expected status: `200`
 - Alert after: **2 consecutive failures**
 
-**Monitor 3 — Soroban RPC**
+**Monitor 4 — Soroban RPC**
 
 - URL: `https://soroban-rpc.stellar.org` (mainnet) or `https://soroban-testnet.stellar.org` (testnet)
 - Method: `POST`
@@ -45,28 +62,32 @@ Log in to BetterUptime and create the following monitors:
 - Expected status: `200`
 - Alert after: **2 consecutive failures**
 
-### 2. Configure PagerDuty Alerts
+### 2. Configure Email & Slack Alerts
 
-1. In BetterUptime → **Integrations** → **PagerDuty** → connect your PagerDuty account.
-2. Set the integration key from your PagerDuty service.
-3. Assign the PagerDuty integration to each monitor above.
-4. In PagerDuty, configure an escalation policy:
-   - Level 1: On-call engineer (immediate)
-   - Level 2: Engineering lead (after 15 min no acknowledgement)
+**Email alerts:**
 
-Alternatively, use **Slack** alerts:
+1. In BetterUptime → **On-call** → **Contacts** → add on-call engineer email addresses.
+2. Assign contacts to each monitor under **Notifications**.
+3. Set alert policy: notify after **2 consecutive failures**.
 
-- BetterUptime → **Integrations** → **Slack** → select `#incidents` channel.
+**Slack alerts:**
+
+1. BetterUptime → **Integrations** → **Slack** → connect workspace.
+2. Select the `#incidents` channel.
+3. Assign the Slack integration to each monitor under **Notifications**.
 
 ### 3. Status Page
 
 1. In BetterUptime → **Status Pages** → **New Status Page**.
-2. Add the three monitors above as components:
+2. Add the four monitors above as components:
    - "Lumigift App" → `/api/health` monitor
+   - "API Readiness" → `/api/health/ready` monitor
    - "Stellar Network" → Horizon monitor
    - "Smart Contracts" → Soroban RPC monitor
-3. Set a custom domain (e.g., `status.lumigift.app`) via CNAME to BetterUptime.
-4. Link the status page URL in the app footer and README.
+3. Set a custom domain: `status.lumigift.app` via CNAME to BetterUptime's endpoint.
+4. The status page URL is listed in the project README (see `README.md`).
+
+> **Status page URL**: https://status.lumigift.app
 
 ## Alternative: Statuspage.io
 
@@ -110,5 +131,41 @@ If you add authenticated monitoring (e.g., a `/api/health/deep` endpoint that ch
 ## Reviewing Monitor Status
 
 - BetterUptime dashboard: https://betteruptime.com/team/monitors
-- Status page: https://status.lumigift.app (once configured)
+- Status page: https://status.lumigift.app
 - PagerDuty incidents: https://lumigift.pagerduty.com/incidents
+
+---
+
+## On-Call Rotation
+
+On-call responsibilities rotate weekly. The schedule is managed in BetterUptime under
+**On-call** → **Schedules** → `lumigift-primary`.
+
+### Rotation Schedule
+
+| Week   | On-Call Engineer  | Backup            |
+| ------ | ----------------- | ----------------- |
+| Week 1 | Engineering Lead  | Senior Engineer A |
+| Week 2 | Senior Engineer A | Senior Engineer B |
+| Week 3 | Senior Engineer B | Engineering Lead  |
+| Week 4 | (repeat)          | —                 |
+
+> Update this table in BetterUptime's schedule UI. The table above is kept in sync
+> manually each quarter.
+
+### On-Call Responsibilities
+
+- Acknowledge alerts within **15 minutes** (P0/P1).
+- Follow the incident runbook at `docs/ops/runbook.md`.
+- Update the status page during active incidents.
+- Hand off any ongoing incidents at rotation changeover.
+
+### Escalation Contacts
+
+| Role             | Contact Method             |
+| ---------------- | -------------------------- |
+| On-call engineer | BetterUptime / Slack DM    |
+| Engineering Lead | Slack `#incidents` + phone |
+| CTO (P0 only)    | Direct call                |
+
+_Section added for Issue #300_

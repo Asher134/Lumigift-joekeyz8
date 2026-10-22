@@ -3,11 +3,17 @@
 # Run lint-staged (Prettier)
 npx lint-staged
 
-# Secret scan — requires gitleaks to be installed locally.
-# CI always runs the full gitleaks scan via GitHub Actions (ci.yml secret-scan job).
+# ── Secret scanning ───────────────────────────────────────────────────────────
+# First layer: gitleaks — fast, config-driven, pattern-based scanner.
+# CI always runs the full gitleaks scan via GitHub Actions (ci.yml: secret-scan job).
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks protect --staged --config=.gitleaks.toml --redact
 else
-  echo "ℹ️  gitleaks not installed locally — skipping pre-commit secret scan."
+  echo "ℹ️  gitleaks not installed locally — skipping pre-commit gitleaks scan."
+  echo "   Install: https://github.com/gitleaks/gitleaks#installing"
   echo "   Secrets are scanned in CI via GitHub Actions (ci.yml: secret-scan job)."
 fi
+
+# Second layer: truffleHog — entropy / verified-credentials scanner.
+# CI runs truffleHog in the secret-scan-trufflehog job on every PR.
+# To run locally: https://github.com/trufflesecurity/trufflehog#installation

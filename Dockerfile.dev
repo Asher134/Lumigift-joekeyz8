@@ -1,5 +1,6 @@
 # Development Dockerfile with hot reload support
-FROM node:20-alpine AS development
+ARG NODE_VERSION=20.18.3-alpine3.21
+FROM node:${NODE_VERSION} AS development
 
 WORKDIR /app
 
@@ -14,10 +15,11 @@ COPY . .
 EXPOSE 3000
 
 # Set environment
-ENV NODE_ENV=development
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV HOSTNAME="0.0.0.0"
-ENV PORT=3000
+ENV NODE_ENV=development \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME="0.0.0.0" \
+    PORT=3000
 
 # Start development server with hot reload
 CMD ["npm", "run", "dev"]
+

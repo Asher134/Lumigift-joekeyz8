@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "crypto";
 import pool from "@/lib/db";
-import type { Gift, GiftStatus } from "@/types";
-import type { CreateGiftInput } from "@/types/schemas";
+import type { Gift, GiftStatus, RefundStatus } from "@/types";
+import type { CreateGiftInput, GiftFilters } from "@/types/schemas";
 import { initializePayment, ngnToKobo } from "@/lib/paystack";
 import { formatNGN } from "@/lib/currency";
 import { serverConfig } from "@/server/config";
@@ -11,6 +11,7 @@ import { sendGiftInvitation } from "@/lib/sms";
 import { stripHtmlTags } from "@/lib/sanitize";
 import { createAuditLog } from "./audit.service";
 import { sendGiftReceivedEmail } from "@/lib/email";
+import type { GiftCursorPosition } from "./gift-cursor";
 
 // ─── Exchange rate helper ─────────────────────────────────────────────────────
 import { getExchangeRate, lockExchangeRate } from "@/server/services/exchange-rate.service";
@@ -34,6 +35,11 @@ export function hashPhone(phone: string): string {
 
 // ─── In-memory store (replace with DB in production) ─────────────────────────
 export const gifts = new Map<string, Gift>();
+
+/** Returns only non-deleted (active) gifts from the store. */
+function activeGifts(): Gift[] {
+  return [...gifts.values()].filter((g) => !g.deletedAt);
+}
 
 /**
  * Creates a new gift record and initializes a Paystack payment session.
@@ -59,7 +65,7 @@ export async function createGift(
   const { dailyLimitNgn } = serverConfig.giftLimits;
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
-  const todayTotal = [...gifts.values()]
+  const todayTotal = activeGifts()
     .filter((g) => g.senderId === senderId && g.createdAt >= todayStart)
     .reduce((sum, g) => sum + g.amountNgn, 0);
   if (todayTotal + input.amountNgn > dailyLimitNgn) {
@@ -69,11 +75,17 @@ export async function createGift(
   const id = randomUUID();
   const amountUsdc = await ngnToUsdc(input.amountNgn);
   const recipientPhoneHash = hashPhone(input.recipientPhone);
+  const paymentReference = `lumigift_${id}`;
 
   // Sanitize message content to prevent stored XSS
   const sanitizedMessage = input.message ? stripHtmlTags(input.message) : undefined;
 
-  const gift: Gift = {
+  // ── Atomically persist gift + payment reference in one DB transaction ──────
+  // This satisfies issue #55: gift row, payment reference, and initial status
+  // are written atomically. If the Paystack call below fails after this point
+  // the gift record exists as pending_payment and can be retried. If the DB
+  // write itself fails, no partial state is left.
+  const gift = await persistGiftWithPaymentRef({
     id,
     senderId,
     recipientPhoneHash,
@@ -82,12 +94,14 @@ export async function createGift(
     amountNgn: input.amountNgn,
     amountUsdc,
     message: sanitizedMessage,
+    themeId: input.themeId,
     unlockAt: new Date(input.unlockAt),
-    status: "pending_payment",
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+    provider: "paystack",
+    paymentReference,
+  });
 
+  // Mirror to in-memory Map for backward-compat with callers that still read
+  // from the Map (will be fully removed once all queries go through gift.db.ts)
   gifts.set(id, gift);
 
   // Lock the exchange rate for slippage protection (expires in 5 minutes)
@@ -107,6 +121,10 @@ export async function createGift(
       recipientIsRegistered,
     },
   });
+
+  // ── Side effects after the transaction commits ──────────────────────────────
+  // These are intentionally fire-and-forget: a failure here leaves a retryable
+  // record in the DB (gift is pending_payment) but does not corrupt gift state.
 
   // If recipient is unregistered, create an invitation and send SMS
   if (!recipientIsRegistered) {
@@ -130,14 +148,14 @@ export async function createGift(
       );
     } catch (err: unknown) {
       console.error("[gift] Failed to create/send invitation:", err);
-      // Don't block gift creation on invitation failure
+      // Don't block gift creation on invitation failure — gift is already persisted
     }
   }
 
   const payment = await initializePayment({
     email: `${senderId}@lumigift.app`, // placeholder; use real email from user record
     amountKobo: ngnToKobo(input.amountNgn),
-    reference: `lumigift_${id}`,
+    reference: paymentReference,
     callbackUrl: `${serverConfig.app.url}/api/payments/callback?giftId=${id}`,
     metadata: { giftId: id, senderId },
   });
@@ -155,12 +173,16 @@ export async function createGift(
 
 /**
  * Retrieves a gift by its unique ID.
+ * Returns `null` for soft-deleted gifts — use {@link getDeletedGiftById} in
+ * admin contexts where deleted records need to be inspected.
  *
  * @param id - The gift UUID.
- * @returns The {@link Gift} if found, or `null` if it does not exist.
+ * @returns The {@link Gift} if found and not soft-deleted, or `null`.
  */
 export async function getGiftById(id: string): Promise<Gift | null> {
-  return gifts.get(id) ?? null;
+  const gift = gifts.get(id);
+  if (!gift || gift.deletedAt) return null;
+  return gift;
 }
 
 /**
@@ -179,6 +201,25 @@ export async function updateGiftStatus(id: string, status: GiftStatus): Promise<
   gift.status = status;
   gift.updatedAt = new Date();
   gifts.set(id, gift);
+
+  // Publish the status change to Redis so SSE subscribers are notified in real
+  // time (issue #272).  Publish is fire-and-forget — a failure must not break
+  // the status update itself.
+  redis
+    .publish(
+      giftStatusChannel(id),
+      JSON.stringify({
+        giftId: id,
+        previousStatus,
+        status,
+        updatedAt: gift.updatedAt.toISOString(),
+      })
+    )
+    .catch((err: unknown) => {
+      // Log but do not propagate — Redis publish is non-critical for the core
+      // gift-status update path.
+      console.error("[gift.service] Redis publish failed for gift status change:", err);
+    });
 
   // Create audit log for status change
   const eventType =
@@ -208,13 +249,13 @@ export async function updateGiftStatus(id: string, status: GiftStatus): Promise<
 }
 
 /**
- * Returns all gifts created by a given sender.
+ * Returns all non-deleted gifts created by a given sender.
  *
  * @param senderId - The authenticated user's ID.
  * @returns An array of {@link Gift} objects, possibly empty.
  */
 export async function getGiftsBySender(senderId: string): Promise<Gift[]> {
-  return [...gifts.values()].filter((g) => g.senderId === senderId);
+  return activeGifts().filter((g) => g.senderId === senderId);
 }
 
 /** Paginated result for {@link getGiftsBySenderPaginated}. */
@@ -222,6 +263,23 @@ export interface GiftPage {
   gifts: Gift[];
   total: number;
   nextCursor: string | null;
+}
+
+/** Applies optional search/filter criteria to a gift (mirrors the indexed SQL predicates). */
+function matchesFilters(gift: Gift, filters: GiftFilters = {}): boolean {
+  if (filters.status && gift.status !== filters.status) return false;
+  if (filters.from && gift.createdAt < filters.from) return false;
+  if (filters.to && gift.createdAt > filters.to) return false;
+  if (filters.q && !(gift.message ?? "").toLowerCase().includes(filters.q.toLowerCase())) {
+    return false;
+  }
+  return true;
+}
+
+export interface GiftPageResult {
+  gifts: Gift[];
+  total: number;
+  nextCursor: GiftCursorPosition | null;
 }
 
 /** Offset-based paginated result for {@link getGiftsBySenderPage}. */
@@ -238,23 +296,47 @@ export interface GiftPageOffset {
  * date descending (newest first).
  *
  * @param senderId - The authenticated user's ID.
- * @param cursor - The ID of the last gift from the previous page, or `null` for
- *   the first page.
+ * @param cursor - The snapshot and last-item position from the previous page,
+ *   or `null` for the first page.
  * @param limit - Maximum number of gifts to return per page.
  * @returns A {@link GiftPage} containing the gifts, total count, and next cursor.
  */
 export async function getGiftsBySenderPaginated(
   senderId: string,
-  cursor: string | null,
-  limit: number
-): Promise<GiftPage> {
+  cursor: GiftCursorPosition | null,
+  limit: number,
+  filters?: GiftFilters
+): Promise<GiftPageResult> {
+  const snapshotAt = cursor ? new Date(cursor.snapshotAt) : new Date();
   const all = [...gifts.values()]
-    .filter((g) => g.senderId === senderId)
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    .filter((g) => g.senderId === senderId && matchesFilters(g, filters))
+    .filter((g) => g.createdAt <= snapshotAt)
+    .sort(
+      (a, b) =>
+        b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
+    );
 
-  const startIndex = cursor ? all.findIndex((g) => g.id === cursor) + 1 : 0;
-  const page = all.slice(startIndex, startIndex + limit);
-  const nextCursor = startIndex + limit < all.length ? page[page.length - 1].id : null;
+  const remaining = cursor
+    ? all.filter((gift) => {
+        const createdAt = gift.createdAt.getTime();
+        const cursorCreatedAt = Date.parse(cursor.createdAt);
+        return (
+          createdAt < cursorCreatedAt || (createdAt === cursorCreatedAt && gift.id < cursor.id)
+        );
+      })
+    : all;
+  const safeLimit = Math.min(100, Math.max(1, Math.floor(limit)));
+  const page = remaining.slice(0, safeLimit);
+  const hasNextPage = remaining.length > safeLimit;
+  const lastGift = page[page.length - 1];
+  const nextCursor =
+    hasNextPage && lastGift
+      ? {
+          snapshotAt: snapshotAt.toISOString(),
+          createdAt: lastGift.createdAt.toISOString(),
+          id: lastGift.id,
+        }
+      : null;
 
   return { gifts: page, total: all.length, nextCursor };
 }
@@ -271,12 +353,13 @@ export async function getGiftsBySenderPaginated(
 export async function getGiftsBySenderPage(
   senderId: string,
   page: number,
-  limit: number
+  limit: number,
+  filters?: GiftFilters
 ): Promise<GiftPageOffset> {
   const safePage = Math.max(1, page);
   const safeLimit = Math.min(100, Math.max(1, limit));
   const all = [...gifts.values()]
-    .filter((g) => g.senderId === senderId)
+    .filter((g) => g.senderId === senderId && matchesFilters(g, filters))
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
   const offset = (safePage - 1) * safeLimit;
@@ -288,30 +371,106 @@ export async function getGiftsBySenderPage(
 }
 
 /**
- * Returns all gifts where the recipient's phone number matches `phone`.
+ * Returns all non-deleted gifts where the recipient's phone number matches `phone`.
  *
  * @param phone - E.164-formatted recipient phone number.
  * @returns An array of {@link Gift} objects, possibly empty.
  */
 export async function getGiftsByRecipient(phone: string): Promise<Gift[]> {
   const hash = hashPhone(phone);
-  return [...gifts.values()].filter((g) => g.recipientPhoneHash === hash);
+  return activeGifts().filter((g) => g.recipientPhoneHash === hash);
 }
 
 /**
- * Cancels a gift by setting its status to `"cancelled"`.
- * Does not validate the current status — callers should check eligibility first.
+ * Cancels a gift by transitioning it to `"cancelled"`.
+ *
+ * Goes through {@link updateGiftStatus} so the state machine is enforced and a
+ * `gift_cancelled` audit entry is written. Callers should check eligibility
+ * first (see `cancellation.service.ts`).
  *
  * @param id - The gift UUID.
+ * @param refundStatus - Refund progress to record on the gift.
  * @returns The updated {@link Gift}, or `null` if the gift does not exist.
+ * @throws If the gift's current status cannot transition to `"cancelled"`.
  */
-export async function cancelGift(id: string): Promise<Gift | null> {
-  const gift = gifts.get(id);
+export async function cancelGift(
+  id: string,
+  refundStatus: RefundStatus = "not_required"
+): Promise<Gift | null> {
+  const gift = await updateGiftStatus(id, "cancelled");
   if (!gift) return null;
-  gift.status = "cancelled";
-  gift.updatedAt = new Date();
+  gift.cancelledAt = new Date();
+  gift.refundStatus = refundStatus;
   gifts.set(id, gift);
   return gift;
+}
+
+/**
+ * Soft-deletes a gift by setting its `deletedAt` timestamp.
+ * The row is preserved for audit and potential refund processing.
+ * An audit log entry is created on every soft-delete.
+ *
+ * Callers should NOT use {@link cancelGift} followed by this — soft-delete
+ * is a separate lifecycle event from cancellation.
+ *
+ * @param id - The gift UUID.
+ * @param deletedBy - The user ID performing the deletion (for audit trail).
+ * @returns The updated {@link Gift}, or `null` if the gift does not exist or is
+ *   already soft-deleted.
+ */
+export async function softDeleteGift(id: string, deletedBy: string): Promise<Gift | null> {
+  const gift = gifts.get(id);
+  if (!gift || gift.deletedAt) return null;
+
+  gift.deletedAt = new Date();
+  gift.updatedAt = new Date();
+  gifts.set(id, gift);
+
+  // Audit log — required for financial compliance
+  await createAuditLog({
+    eventType: "gift_cancelled",
+    userId: deletedBy,
+    giftId: id,
+    amountNgn: gift.amountNgn,
+    amountUsdc: gift.amountUsdc,
+    metadata: {
+      action: "soft_delete",
+      previousStatus: gift.status,
+      deletedAt: gift.deletedAt.toISOString(),
+    },
+  });
+
+  return gift;
+}
+
+/**
+ * Retrieves a gift by ID regardless of its soft-delete status.
+ * Intended for admin use only — regular callers should use {@link getGiftById}.
+ *
+ * @param id - The gift UUID.
+ * @returns The {@link Gift} (including soft-deleted), or `null` if not found.
+ */
+export async function getDeletedGiftById(id: string): Promise<Gift | null> {
+  return gifts.get(id) ?? null;
+}
+
+/**
+ * Hard-deletes gifts that were soft-deleted before `retentionCutoff`.
+ * Intended to be called by a scheduled cron job after the data-retention
+ * window (e.g. 7 years) has expired.
+ *
+ * @param retentionCutoff - Gifts soft-deleted before this date will be removed.
+ * @returns The number of records hard-deleted.
+ */
+export async function hardDeleteExpiredGifts(retentionCutoff: Date): Promise<number> {
+  let count = 0;
+  for (const [id, gift] of gifts.entries()) {
+    if (gift.deletedAt && gift.deletedAt < retentionCutoff) {
+      gifts.delete(id);
+      count++;
+    }
+  }
+  return count;
 }
 
 /**
@@ -332,14 +491,14 @@ export async function storeClaimTxHash(id: string, txHash: string): Promise<Gift
 }
 
 /**
- * Retrieves a gift by its on-chain Soroban contract ID.
+ * Retrieves a non-deleted gift by its on-chain Soroban contract ID.
  *
  * @param contractId - The deployed escrow contract address (C…).
- * @returns The matching {@link Gift}, or `null` if not found.
+ * @returns The matching {@link Gift}, or `null` if not found or soft-deleted.
  */
 export async function getGiftByContractId(contractId: string): Promise<Gift | null> {
   for (const gift of gifts.values()) {
-    if (gift.contractId === contractId) return gift;
+    if (gift.contractId === contractId && !gift.deletedAt) return gift;
   }
   return null;
 }
@@ -371,6 +530,32 @@ export async function updateGiftStatusIdempotent(
   }
 }
 
+/**
+ * Returns all non-deleted gifts matching a given status.
+ */
 export async function getGiftsByStatus(status: GiftStatus): Promise<Gift[]> {
-  return [...gifts.values()].filter((g) => g.status === status);
+  return activeGifts().filter((g) => g.status === status);
+}
+
+/**
+ * Evaluates whether a gift's unlock time has been reached using the canonical inclusive rule.
+ *
+ * Boundary semantics (strictly aligned with Soroban contract `contracts/escrow/src/lib.rs`):
+ * - `now < unlockAt`:  Locked (`false`)
+ * - `now >= unlockAt`: Unlocked (`true`) — a claim is valid exactly at `unlockAt`.
+ *
+ * On-chain Soroban contract logic:
+ *   `if env.ledger().timestamp() < unlock_time { return Err(EscrowError::StillLocked); }`
+ *
+ * @param gift - An object containing the `unlockAt` date (or date string/timestamp).
+ * @param now  - Reference date for evaluation (defaults to current system time).
+ * @returns `true` if `now >= unlockAt` (inclusive), `false` otherwise.
+ */
+export function isGiftUnlocked(
+  gift: { unlockAt: Date | string | number },
+  now: Date | number = new Date()
+): boolean {
+  const unlockMs = new Date(gift.unlockAt).getTime();
+  const nowMs = typeof now === "number" ? now : now.getTime();
+  return nowMs >= unlockMs;
 }
