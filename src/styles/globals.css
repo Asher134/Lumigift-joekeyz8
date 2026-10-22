@@ -199,3 +199,54 @@ body {
     font-size: var(--text-base);
   }
 }
+
+/* ── Gift card background themes (issue #348) ─────────────────────────────── */
+.gift-theme {
+  background-image: var(--gift-theme-sm), var(--gift-theme-fallback);
+  background-size: cover;
+  background-position: center;
+  color: #fff;
+}
+
+@media (min-width: 768px) {
+  .gift-theme {
+    background-image: var(--gift-theme-lg), var(--gift-theme-fallback);
+  }
+}
+
+/* ── Print stylesheet (issue #352) ─────────────────────────────────────────── */
+@media print {
+  nav,
+  aside,
+  button,
+  .skip-link,
+  .no-print {
+    display: none !important;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* On receipt pages, print only the receipt itself */
+  body:has(.print-receipt) * {
+    visibility: hidden;
+  }
+
+  body:has(.print-receipt) .print-receipt,
+  body:has(.print-receipt) .print-receipt * {
+    visibility: visible;
+    color: #000;
+  }
+
+  body:has(.print-receipt) .print-receipt {
+    position: absolute;
+    inset: 0 0 auto 0;
+  }
+
+  a[href^="http"]::after {
+    content: "";
+  }
+}

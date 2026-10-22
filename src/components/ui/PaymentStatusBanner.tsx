@@ -177,6 +177,7 @@ export function PaymentStatusBanner({
       className={[styles.banner, styles[`banner--${content.variant}`]].join(" ")}
       role="status"
       aria-live="polite"
+      aria-atomic="true"
       aria-label={`${PROVIDER_LABEL[provider]}: ${content.heading}`}
     >
       <div className={styles.header}>
