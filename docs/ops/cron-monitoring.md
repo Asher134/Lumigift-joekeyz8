@@ -156,3 +156,32 @@ full diagnosis and resolution steps.
 | P1       | `reconcile` missed for > 12 hours               | Engineering lead |
 | P1       | `expire` missed for > 48 hours                  | Engineering lead |
 | P2       | Any cron 401 (unauthorized invocation attempts) | Security team    |
+
+---
+
+## Dead-Letter Queue (failed-job retries)
+
+When a cron handler throws, the failure is recorded in a Redis dead-letter key
+`cron:dead-letter:<job>` (TTL: 7 days) alongside the structured `cron.dead_letter`
+log metric and a Sentry capture via `recordCronFailure`. The payload contains the
+job name, duration, error reason, and timestamp so on-call can diagnose and
+re-trigger the job manually.
+
+Inspect dead-letters with:
+
+```bash
+# List all dead-lettered cron jobs
+redis-cli keys "cron:dead-letter:*"
+
+# Inspect a specific job's failure payload
+redis-cli get "cron:dead-letter:cron/v1/unlock"
+```
+
+Each cron route stores its dead-letter on failure:
+- `cron/v1/unlock`
+- `cron/v1/expire`
+- `cron/v1/reconcile`
+- `cron/v1/index-events`
+
+See the [Cron Job Failure](./runbook.md#cron-job-failure) runbook section for
+manual re-trigger and recovery steps.

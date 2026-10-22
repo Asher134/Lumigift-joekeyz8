@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "crypto";
 import pool from "@/lib/db";
 import type { Gift, GiftStatus, RefundStatus } from "@/types";
-import type { CreateGiftInput } from "@/types/schemas";
+import type { CreateGiftInput, GiftFilters } from "@/types/schemas";
 import { initializePayment, ngnToKobo } from "@/lib/paystack";
 import { formatNGN } from "@/lib/currency";
 import { serverConfig } from "@/server/config";
@@ -94,6 +94,7 @@ export async function createGift(
     amountNgn: input.amountNgn,
     amountUsdc,
     message: sanitizedMessage,
+    themeId: input.themeId,
     unlockAt: new Date(input.unlockAt),
     provider: "paystack",
     paymentReference,
@@ -245,6 +246,17 @@ export interface GiftPage {
   nextCursor: string | null;
 }
 
+/** Applies optional search/filter criteria to a gift (mirrors the indexed SQL predicates). */
+function matchesFilters(gift: Gift, filters: GiftFilters = {}): boolean {
+  if (filters.status && gift.status !== filters.status) return false;
+  if (filters.from && gift.createdAt < filters.from) return false;
+  if (filters.to && gift.createdAt > filters.to) return false;
+  if (filters.q && !(gift.message ?? "").toLowerCase().includes(filters.q.toLowerCase())) {
+    return false;
+  }
+  return true;
+}
+
 export interface GiftPageResult {
   gifts: Gift[];
   total: number;
@@ -273,11 +285,12 @@ export interface GiftPageOffset {
 export async function getGiftsBySenderPaginated(
   senderId: string,
   cursor: GiftCursorPosition | null,
-  limit: number
+  limit: number,
+  filters?: GiftFilters
 ): Promise<GiftPageResult> {
   const snapshotAt = cursor ? new Date(cursor.snapshotAt) : new Date();
   const all = [...gifts.values()]
-    .filter((g) => g.senderId === senderId)
+    .filter((g) => g.senderId === senderId && matchesFilters(g, filters))
     .filter((g) => g.createdAt <= snapshotAt)
     .sort(
       (a, b) =>
@@ -321,12 +334,13 @@ export async function getGiftsBySenderPaginated(
 export async function getGiftsBySenderPage(
   senderId: string,
   page: number,
-  limit: number
+  limit: number,
+  filters?: GiftFilters
 ): Promise<GiftPageOffset> {
   const safePage = Math.max(1, page);
   const safeLimit = Math.min(100, Math.max(1, limit));
-  const all = activeGifts()
-    .filter((g) => g.senderId === senderId)
+  const all = [...gifts.values()]
+    .filter((g) => g.senderId === senderId && matchesFilters(g, filters))
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
   const offset = (safePage - 1) * safeLimit;
@@ -526,4 +540,3 @@ export function isGiftUnlocked(
   const nowMs = typeof now === "number" ? now : now.getTime();
   return nowMs >= unlockMs;
 }
-

@@ -1,0 +1,226 @@
+name: Chaos Engineering Tests
+
+# Issue #297 — Chaos tests for Redis and Postgres failures
+#
+# Runs weekly (Tuesday 06:00 UTC) to catch regressions in failure-handling.
+# Can also be triggered manually for on-demand chaos runs.
+
+on:
+  schedule:
+    # Every Tuesday at 06:00 UTC
+    - cron: "0 6 * * 2"
+  workflow_dispatch:
+    inputs:
+      app_url:
+        description: "URL of the app to test against (default: spun up in CI)"
+        required: false
+        default: "http://localhost:3000"
+
+concurrency:
+  group: chaos-tests
+  cancel-in-progress: false  # Never cancel a running chaos test
+
+permissions:
+  contents: read
+
+jobs:
+  chaos-test:
+    name: Chaos Engineering Suite (Redis + Postgres)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: lumigift
+          POSTGRES_PASSWORD: lumigift
+          POSTGRES_DB: lumigift_chaos
+        ports:
+          - "5433:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6380:6379"
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      toxiproxy:
+        image: ghcr.io/shopify/toxiproxy:2.9.0
+        ports:
+          - "8474:8474"
+          - "5434:5434"
+          - "6381:6381"
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build app (for chaos tests against real binary)
+        run: npm run build
+        env:
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          NEXT_PUBLIC_APP_NAME: Lumigift
+          NEXTAUTH_URL: http://localhost:3000
+          NEXTAUTH_SECRET: ci-chaos-secret-not-real-32chars!!
+          # Point app at Toxiproxy-wrapped services so chaos tests can break connections
+          DATABASE_URL: postgresql://lumigift:lumigift@localhost:5434/lumigift_chaos
+          REDIS_URL: redis://localhost:6381
+          STELLAR_NETWORK: testnet
+          STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+          STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          STELLAR_ESCROW_CONTRACT_ID: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM
+          STELLAR_SERVER_SECRET_KEY: SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          STELLAR_RPC_URL: https://soroban-testnet.stellar.org
+          STELLAR_SERVER_PUBLIC_KEY: GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          USDC_ISSUER: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+          USDC_ASSET_CODE: USDC
+          PAYSTACK_SECRET_KEY: sk_test_placeholder
+          STRIPE_SECRET_KEY: sk_test_placeholder
+          STRIPE_WEBHOOK_SECRET: whsec_placeholder
+          TERMII_API_KEY: placeholder
+          CRON_SECRET: ci-chaos-cron-secret
+          CSRF_SECRET: ci-chaos-csrf-secret
+          CLOUDINARY_CLOUD_NAME: placeholder
+          CLOUDINARY_API_KEY: "000000000000000"
+          CLOUDINARY_API_SECRET: placeholder
+
+      - name: Start app (background)
+        run: |
+          DATABASE_URL=postgresql://lumigift:lumigift@localhost:5434/lumigift_chaos \
+          REDIS_URL=redis://localhost:6381 \
+          npm run start &
+          echo $! > /tmp/app.pid
+          # Wait for the app to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "App ready after ${i}s"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Seed chaos database
+        run: |
+          TEST_DATABASE_URL=postgresql://lumigift:lumigift@localhost:5433/lumigift_chaos \
+          npx ts-node scripts/seed-test-db.ts
+
+      - name: Wait for Toxiproxy
+        run: |
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:8474/version > /dev/null 2>&1; then
+              echo "Toxiproxy ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run Redis chaos tests
+        id: redis-chaos
+        run: |
+          CHAOS_MODE=1 CHAOS_APP_URL=http://localhost:3000 \
+          TOXIPROXY_API=http://localhost:8474 \
+          npx jest chaos-tests/chaos-redis.test.ts \
+            --runInBand --forceExit --no-coverage \
+            --testTimeout=30000 \
+            --json --outputFile=chaos-redis-results.json \
+            2>&1 | tee chaos-redis.log
+        continue-on-error: true
+
+      - name: Run Postgres chaos tests
+        id: postgres-chaos
+        run: |
+          CHAOS_MODE=1 CHAOS_APP_URL=http://localhost:3000 \
+          TOXIPROXY_API=http://localhost:8474 \
+          npx jest chaos-tests/chaos-postgres.test.ts \
+            --runInBand --forceExit --no-coverage \
+            --testTimeout=30000 \
+            --json --outputFile=chaos-postgres-results.json \
+            2>&1 | tee chaos-postgres.log
+        continue-on-error: true
+
+      - name: Generate chaos results summary
+        if: always()
+        run: |
+          echo "## Chaos Engineering Test Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Run:** \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Date:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # Redis results
+          if [ -f chaos-redis-results.json ]; then
+            PASSED=$(jq '.numPassedTests' chaos-redis-results.json 2>/dev/null || echo "?")
+            FAILED=$(jq '.numFailedTests' chaos-redis-results.json 2>/dev/null || echo "?")
+            echo "### Redis Failure Tests" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Passed: $PASSED  |  Failed: $FAILED" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Redis Failure Tests" >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ Results file not found" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # Postgres results
+          if [ -f chaos-postgres-results.json ]; then
+            PASSED=$(jq '.numPassedTests' chaos-postgres-results.json 2>/dev/null || echo "?")
+            FAILED=$(jq '.numFailedTests' chaos-postgres-results.json 2>/dev/null || echo "?")
+            echo "### Postgres Failure Tests" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Passed: $PASSED  |  Failed: $FAILED" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Postgres Failure Tests" >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ Results file not found" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+          echo "_See attached artifacts for full logs and JSON results._" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload chaos test artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chaos-test-results-${{ github.run_number }}
+          path: |
+            chaos-redis-results.json
+            chaos-postgres-results.json
+            chaos-redis.log
+            chaos-postgres.log
+          retention-days: 30
+
+      - name: Stop app
+        if: always()
+        run: |
+          if [ -f /tmp/app.pid ]; then
+            kill "$(cat /tmp/app.pid)" 2>/dev/null || true
+          fi
+
+      - name: Fail if any chaos test failed
+        run: |
+          REDIS_FAIL=${{ steps.redis-chaos.outcome == 'failure' && '1' || '0' }}
+          PG_FAIL=${{ steps.postgres-chaos.outcome == 'failure' && '1' || '0' }}
+          if [ "$REDIS_FAIL" = "1" ] || [ "$PG_FAIL" = "1" ]; then
+            echo "❌ One or more chaos test suites failed."
+            echo "   Redis suite: ${{ steps.redis-chaos.outcome }}"
+            echo "   Postgres suite: ${{ steps.postgres-chaos.outcome }}"
+            echo ""
+            echo "Review the uploaded artifacts and update the runbook at"
+            echo "docs/ops/runbook.md#chaos-engineering-results if needed."
+            exit 1
+          fi
+          echo "✅ All chaos tests passed."

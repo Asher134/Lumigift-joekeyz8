@@ -8,6 +8,7 @@ const labelMap: Record<GiftStatus, string> = {
   locked: "Locked 🔒",
   unlocked: "Unlocked 🎁",
   claimed: "Claimed ✓",
+  expired_pending_refund: "Expired · Claimable",
   expired: "Expired",
   cancelled: "Cancelled",
 };

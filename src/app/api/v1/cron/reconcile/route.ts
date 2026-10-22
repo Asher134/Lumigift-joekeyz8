@@ -14,7 +14,11 @@ import {
   reconcilePendingPayments,
   getDeadLetteredGiftIds,
 } from "@/server/services/payment-reconciliation.service";
-import { startTimer, recordCronSuccess, recordCronFailure } from "@/lib/metrics";
+import {
+  recordCronSuccess,
+  recordCronFailure,
+  recordDeadLetter,
+} from "@/lib/metrics";
 import type { ApiResponse } from "@/types";
 import type { ReconcileResult } from "@/server/services/payment-reconciliation.service";
 import { isAuthorizedCronRequest } from "@/server/cron-auth";
@@ -66,7 +70,10 @@ export const GET = async (req: NextRequest) => {
       },
     });
   } catch (err) {
+    const durationMs = Date.now() - startedAt;
     console.error("[cron/reconcile] run failed", err);
+    recordCronFailure("cron/v1/reconcile", durationMs, err);
+    await recordDeadLetter("cron/v1/reconcile", durationMs, err);
     await pingHealthcheck("/fail"); // failure ping
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: "Reconciliation job failed" },
