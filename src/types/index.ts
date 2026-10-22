@@ -1,8 +1,11 @@
 // ─── User ─────────────────────────────────────────────────────────────────────
+export type AccountType = "personal" | "business";
+
 export interface User {
   id: string;
   phone: string;
   displayName: string;
+  accountType: AccountType;
   email?: string;
   avatarUrl?: string;
   stellarPublicKey?: string;
@@ -155,14 +158,26 @@ export interface MessageReport {
 // ─── Support (#152) ────────────────────────────────────────────────────────────
 export type SupportCaseStatus = "open" | "in_progress" | "resolved" | "closed";
 
+export interface SupportCaseMessage {
+  id: string;
+  author: "user" | "agent";
+  body: string;
+  createdAt: Date;
+}
+
 export interface SupportCase {
   id: string;
   caseReference: string;
   userId: string;
-  giftId: string;
+  /** Gift the case relates to; omitted for general enquiries opened from the support widget. */
+  giftId?: string;
   reason: string;
   details?: string;
   status: SupportCaseStatus;
+  /** Conversation thread between the user and support agents. */
+  messages: SupportCaseMessage[];
+  /** True when an agent has replied since the user last viewed the case. */
+  hasUnreadReply: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
