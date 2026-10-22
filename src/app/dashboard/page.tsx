@@ -56,8 +56,14 @@ export default function DashboardPage() {
         <div className="container">
           <OfflineBanner />
           <h1 className={styles.title}>Your Gifts</h1>
-          <div className={styles.grid} aria-live="polite" aria-busy="true">
-            <GiftCardSkeleton count={PAGE_SIZE} />
+          {/* Issue #279: aria-busy + aria-label on skeleton wrapper; default 3 cards */}
+          <div
+            className={styles.grid}
+            aria-live="polite"
+            aria-busy="true"
+            aria-label="Loading gifts"
+          >
+            <GiftCardSkeleton count={3} />
           </div>
         </div>
       </div>
