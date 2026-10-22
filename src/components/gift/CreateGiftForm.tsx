@@ -18,7 +18,27 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { GiftFlowErrorBoundary } from "./GiftFlowErrorBoundary";
 import styles from "./CreateGiftForm.module.css";
 
+// ── Gift amount limits ────────────────────────────────────────────────────────
+const GIFT_MIN_AMOUNT_NGN = 500;
+const GIFT_MAX_AMOUNT_NGN = 5_000_000;
+const GIFT_DAILY_LIMIT_NGN = 1_000_000;
+
 type Step = "form" | "preview";
+
+/**
+ * Returns true when the supplied datetime-local string falls within a
+ * known DST transition gap (heuristic: offset changes within ±1 hour).
+ */
+function isAmbiguousDstTransition(isoString: string): boolean {
+  try {
+    const date = new Date(isoString);
+    const before = new Date(date.getTime() - 60 * 60 * 1000);
+    const after = new Date(date.getTime() + 60 * 60 * 1000);
+    return before.getTimezoneOffset() !== after.getTimezoneOffset();
+  } catch {
+    return false;
+  }
+}
 
 export function CreateGiftForm() {
   return (
@@ -57,6 +77,10 @@ function CreateGiftFormContent() {
     mode: "onTouched",
   });
 
+  // Destructure the phone field's react-hook-form bindings so we can pass them
+  // to PhoneInput separately (it uses forwardRef + onChange/onBlur callbacks).
+  const phoneFieldProps = register("recipientPhone");
+
   // useMutation for gift creation — invalidates the gifts cache on success so
   // the dashboard reflects the new gift without a manual reload.
   const createGiftMutation = useMutation({
@@ -82,6 +106,7 @@ function CreateGiftFormContent() {
     },
     onError: (err: Error) => {
       setError(err.message);
+      setApiError(classifyApiError(err.message));
     },
   });
 
@@ -89,6 +114,7 @@ function CreateGiftFormContent() {
   const onFormSubmit = async (data: CreateGiftInput) => {
     setLoading(true);
     setError(null);
+    setApiError(null);
     // Warn if the chosen local time falls in a DST gap
     setUnlockDstWarning(isAmbiguousDstTransition(unlockLocal));
     try {
@@ -139,10 +165,13 @@ function CreateGiftFormContent() {
 
   const onCancelUnregistered = () => {
     setShowUnregisteredWarning(false);
+    // Return focus to the submit button for keyboard users
+    submitButtonRef.current?.focus();
   };
 
   const onConfirm = () => {
     setError(null);
+    setApiError(null);
     const data = getValues();
     createGiftMutation.mutate(data);
   };
@@ -179,25 +208,31 @@ function CreateGiftFormContent() {
           {...register("recipientName")}
         />
 
-        <Input
+        {/*
+         * PhoneInput: live E.164 normalisation with human-readable preview.
+         * The Zod schema (via zodResolver) handles the final validation;
+         * PhoneInput also gives inline feedback before Zod fires (issue #271).
+         */}
+        <PhoneInput
+          {...phoneFieldProps}
           label="Recipient's Phone"
-          type="tel"
-          placeholder="+2348012345678"
           error={errors.recipientPhone?.message}
-          {...register("recipientPhone")}
+          defaultNigerian
         />
 
+        {/* Amount — limits enforced in Zod schema, mirrored here (#270) */}
         <Input
           label="Gift Amount (₦)"
           type="number"
           placeholder="5000"
-          min={500}
-          max={500000}
+          min={GIFT_MIN_AMOUNT_NGN}
+          max={GIFT_MAX_AMOUNT_NGN}
           error={errors.amountNgn?.message}
           {...register("amountNgn", { valueAsNumber: true })}
         />
         <p className="input-hint">
-          Min {formatNGN(500)} · Max {formatNGN(500000)} · Daily limit {formatNGN(1000000)}
+          Min {formatNGN(GIFT_MIN_AMOUNT_NGN)} · Max {formatNGN(GIFT_MAX_AMOUNT_NGN)} · Daily limit{" "}
+          {formatNGN(GIFT_DAILY_LIMIT_NGN)}
         </p>
 
         <Input
