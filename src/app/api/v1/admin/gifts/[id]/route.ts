@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withErrorHandler, rateLimit } from "@/server/middleware";
+import { withErrorHandler, rateLimit, ERROR_CODES } from "@/server/middleware";
 import { requireAdmin } from "@/server/middleware/admin";
 import { adminGetGift, logAdminAction } from "@/server/services/admin-gift.service";
 import { setGiftGracePeriod } from "@/server/services/scheduler.service";
@@ -21,7 +21,7 @@ export const GET = withErrorHandler(async (req: NextRequest, context: unknown) =
 
   if (!gift) {
     return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: "Gift not found" },
+      { success: false, error: "Gift not found", code: ERROR_CODES.GIFT_NOT_FOUND },
       { status: 404 }
     );
   }

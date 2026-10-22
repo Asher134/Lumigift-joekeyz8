@@ -97,6 +97,7 @@ paths:
   /api/v1/auth/send-otp:
     post:
       tags: [Auth]
+      security: []
       summary: Send OTP to a phone number
       description: |
         Sends a one-time password via SMS. Always returns the same success body
@@ -146,6 +147,7 @@ paths:
   /api/v1/auth/report-login:
     get:
       tags: [Auth]
+      security: []
       summary: Report a suspicious login (SMS link)
       description: Called when a user taps the "this wasn't me" link in the login SMS.
       parameters:
@@ -177,6 +179,7 @@ paths:
     post:
       tags: [Auth]
       summary: Report a suspicious login (JSON body)
+      security: []
       requestBody:
         required: true
         content:
@@ -300,6 +303,7 @@ paths:
     get:
       tags: [Gifts]
       summary: Get a gift by ID (public claim view)
+      security: []
       description: Returns a safe subset of gift fields — no sender PII.
       parameters:
         - $ref: "#/components/parameters/GiftId"
@@ -365,6 +369,7 @@ paths:
     post:
       tags: [Gifts]
       summary: Claim a gift
+      security: []
       description: |
         Transfers the locked USDC to the recipient's Stellar address.
         Requires the gift to be in `locked` status and past its unlock time.
@@ -419,6 +424,7 @@ paths:
     post:
       tags: [Payments]
       summary: Paystack webhook
+      security: []
       description: |
         Receives `charge.success` events from Paystack.
         Signature verified via HMAC-SHA512 (`x-paystack-signature` header).
@@ -492,6 +498,7 @@ paths:
     get:
       tags: [Payments]
       summary: Paystack redirect callback
+      security: []
       description: Paystack redirects the user here after payment. Verifies payment and redirects to success or failure page.
       parameters:
         - name: reference
@@ -516,6 +523,7 @@ paths:
     post:
       tags: [Payments]
       summary: Stripe webhook
+      security: []
       description: |
         Receives `payment_intent.succeeded` events from Stripe.
         Signature verified via `stripe-signature` header.
@@ -653,6 +661,253 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
+  /api/v1/admin/gifts:
+    get:
+      tags: [Admin]
+      summary: List gifts for administrators
+      description: Returns a filtered, cursor-paginated list. Requires an authenticated admin session.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Case-insensitive search in recipient name.
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/GiftStatus"
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Gift ID returned as `nextCursor` by the previous page.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Gift page
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdminGiftPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/admin/gifts/{id}:
+    get:
+      tags: [Admin]
+      summary: Get a gift by ID for administrators
+      description: Returns the complete gift record. Requires an authenticated admin session.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/GiftId"
+      responses:
+        "200":
+          description: Gift found
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Gift"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Gift does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                success: false
+                error: Gift not found
+                code: GIFT_NOT_FOUND
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/admin/audit-logs:
+    get:
+      tags: [Admin]
+      summary: Query audit logs
+      description: Returns audit events filtered by actor, gift, event type, and time range. Requires an authenticated admin session.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: query
+          schema:
+            type: string
+        - name: giftId
+          in: query
+          schema:
+            type: string
+        - name: eventType
+          in: query
+          schema:
+            $ref: "#/components/schemas/AuditEventType"
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Matching audit logs and total result count
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AuditLogPage"
+        "400":
+          description: Invalid query parameter.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                success: false
+                error: Invalid eventType
+                code: VALIDATION_ERROR
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/admin/moderation:
+    get:
+      tags: [Admin]
+      summary: List moderation reports
+      description: Returns pending and resolved reports, newest first. Requires an authenticated admin session.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Moderation reports
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/MessageReport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+    post:
+      tags: [Admin]
+      summary: Resolve a moderation report
+      description: Approves or removes reported content. Requires an authenticated admin session.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reportId, action]
+              properties:
+                reportId:
+                  type: string
+                  description: Moderation report identifier.
+                action:
+                  type: string
+                  enum: [approved, removed]
+      responses:
+        "200":
+          description: Report resolved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MessageReport"
+        "400":
+          description: Missing report ID or unsupported action.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                success: false
+                error: action must be one of approved, removed
+                code: VALIDATION_ERROR
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Report does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                success: false
+                error: Report not found
+                code: GIFT_NOT_FOUND
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
   /api/v1/cron/unlock:
     get:
       tags: [Cron]
@@ -695,8 +950,8 @@ paths:
   /api/v1/cron/expire:
     get:
       tags: [Cron]
-      summary: Expire stale pending-payment gifts
-      description: Marks gifts stuck in `pending_payment` as `expired` after a timeout.
+      summary: Expire unclaimed gifts
+      description: Processes unlocked gifts that have remained unclaimed for more than 365 days, including the configured sender refund and notification flow.
       security:
         - cronBearer: []
       responses:
@@ -716,9 +971,12 @@ paths:
                         type: object
                         required: [expired]
                         properties:
-                          expired:
+                          message:
+                            type: string
+                            example: Expiry check complete
+                          durationMs:
                             type: integer
-                            description: Number of gifts expired in this run
+                            description: Wall-clock time of the run in milliseconds
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -728,6 +986,7 @@ paths:
     get:
       tags: [Health]
       summary: Service health check
+      security: []
       description: Returns the health status of the API service and its dependencies.
       responses:
         "200":
@@ -760,10 +1019,10 @@ paths:
   /api/v1/cron/reconcile:
     get:
       tags: [Cron]
-      summary: Reconcile payment and blockchain state
+      summary: Reconcile pending payments
       description: |
-        Checks gifts whose payment succeeded but contract deployment is pending.
-        Retries failed deployments and flags irreconcilable gifts for manual review.
+        Polls Paystack for pending gifts, retries recoverable cases, and reports
+        dead-lettered gifts.
         Requires `Authorization: Bearer <CRON_SECRET>`.
       security:
         - cronBearer: []
@@ -778,14 +1037,11 @@ paths:
                   - type: object
                     properties:
                       data:
-                        type: object
-                        properties:
-                          processed:
-                            type: integer
-                          durationMs:
-                            type: integer
+                        $ref: "#/components/schemas/ReconcileResult"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/cron/index-events:
     get:
@@ -872,6 +1128,8 @@ components:
           enum:
             - UNAUTHORIZED
             - FORBIDDEN
+            - BAD_REQUEST
+            - NOT_FOUND
             - SESSION_EXPIRED
             - VALIDATION_ERROR
             - INVALID_PAYLOAD
@@ -886,6 +1144,8 @@ components:
             - RATE_SLIPPAGE
             - RATE_EXPIRED
             - RATE_LIMIT_EXCEEDED
+            - RATE_LIMITED
+            - INVALID_TRANSITION
             - INTERNAL_ERROR
           example: "GIFT_NOT_UNLOCKED"
         correlationId:
@@ -941,30 +1201,6 @@ components:
           format: date-time
         status:
           $ref: "#/components/schemas/GiftStatus"
-        contractId:
-          type: string
-          nullable: true
-          description: Soroban escrow contract instance ID (C...)
-        stellarTxHash:
-          type: string
-          nullable: true
-          description: Stellar transaction hash from the escrow funding call
-        claimTxHash:
-          type: string
-          description: |
-            Current lifecycle state. Valid transitions:
-            draft → pending_payment → funded → locked → unlocked → claimed
-            Any non-terminal state can transition to cancelled.
-            expired is set by the cron job on unlocked gifts older than 365 days.
-          enum:
-            - draft
-            - pending_payment
-            - funded
-            - locked
-            - unlocked
-            - claimed
-            - cancelled
-            - expired
         contractId:
           type: string
           nullable: true
@@ -1080,6 +1316,123 @@ components:
           type: string
           enum: [paystack, stripe]
           default: paystack
+
+    AdminGiftPage:
+      type: object
+      required: [gifts, total, nextCursor]
+      properties:
+        gifts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Gift"
+        total:
+          type: integer
+        nextCursor:
+          type: string
+          nullable: true
+
+    AuditEventType:
+      type: string
+      enum: [gift_created, payment_received, gift_funded, gift_claimed, gift_cancelled, payment_failed, gift_refunded, data_export_requested, data_deletion_requested, data_deletion_completed, data_deletion_rejected]
+
+    AuditLog:
+      type: object
+      required: [id, eventType, userId, giftId, amountNgn, amountUsdc, timestamp, ipAddress, userAgent, metadata]
+      properties:
+        id:
+          type: string
+        eventType:
+          $ref: "#/components/schemas/AuditEventType"
+        userId:
+          type: string
+          nullable: true
+        giftId:
+          type: string
+          nullable: true
+        amountNgn:
+          type: number
+          nullable: true
+        amountUsdc:
+          type: string
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+        ipAddress:
+          type: string
+          nullable: true
+        userAgent:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+    AuditLogPage:
+      type: object
+      required: [logs, total]
+      properties:
+        logs:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditLog"
+        total:
+          type: integer
+
+    MessageReport:
+      type: object
+      required: [id, giftId, reporterId, reason, status, createdAt]
+      properties:
+        id:
+          type: string
+        giftId:
+          type: string
+        reporterId:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+          enum: [pending, resolved]
+        action:
+          type: string
+          enum: [approved, removed]
+        createdAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+
+    ReconcileResult:
+      type: object
+      required: [inspected, recovered, failed, pending, deadLettered, errors, durationMs, deadLetteredTotal]
+      properties:
+        inspected:
+          type: integer
+        recovered:
+          type: integer
+        failed:
+          type: integer
+        pending:
+          type: integer
+        deadLettered:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: object
+            required: [giftId, message]
+            properties:
+              giftId:
+                type: string
+              message:
+                type: string
+        durationMs:
+          type: integer
+        deadLetteredTotal:
+          type: integer
 
   responses:
     BadRequest:
